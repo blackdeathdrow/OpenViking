@@ -144,7 +144,7 @@ a.b-tag:hover { color: var(--th-ink); border-color: var(--th-ink); }
 .b-topbar__inner { max-width: 1280px; margin: 0 auto; padding: 14px 24px; display: flex; align-items: center; gap: 24px; }
 .b-brand { display: flex; align-items: center; gap: 10px; cursor: pointer; user-select: none; }
 .b-brand__mark { width: 26px; height: 26px; border-radius: 4px; object-fit: cover; transition: filter 0.3s; }
-[data-theme="kami"] .b-brand__mark { filter: invert(1); }
+[data-theme="washi"] .b-brand__mark { filter: invert(1); }
 .b-brand__name { font-family: var(--th-font-display); font-weight: 600; font-size: 17px; letter-spacing: -0.01em; }
 .b-brand__sub { font-family: var(--th-font-mono); font-size: 11px; letter-spacing: 0.1em; color: var(--th-mute); margin-left: 4px; }
 .b-topbar__nav { margin-left: auto; display: flex; align-items: center; gap: 8px; }
