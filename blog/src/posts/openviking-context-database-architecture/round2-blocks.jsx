@@ -139,29 +139,42 @@ function Round2Styles() {
       }
       .ovarch2-pipeline {
         display: grid;
-        grid-template-columns: repeat(6, minmax(88px, 1fr));
-        gap: 8px;
-        align-items: end;
-        min-height: 230px;
-        padding: 16px;
+        grid-template-columns: 1fr;
+        gap: 10px;
+        padding: 14px;
         border: 1px solid var(--th-line);
         border-radius: var(--r2-radius);
         background: var(--th-bg);
       }
       .ovarch2-pipeline__stage {
         display: grid;
-        align-content: end;
-        gap: 8px;
-        min-height: 190px;
+        grid-template-columns: minmax(104px, 0.34fr) minmax(0, 1fr);
+        gap: 12px;
+        align-items: center;
+        min-height: 0;
+      }
+      .ovarch2-pipeline__label {
+        display: grid;
+        gap: 2px;
+      }
+      .ovarch2-pipeline__track {
+        height: 16px;
+        overflow: hidden;
+        border: 1px solid color-mix(in oklab, var(--tone) 62%, var(--th-line));
+        border-radius: 999px;
+        background: color-mix(in oklab, var(--tone) 9%, var(--th-bg));
       }
       .ovarch2-pipeline__bar {
-        min-height: 20px;
-        border: 1px solid color-mix(in oklab, var(--tone) 62%, var(--th-line));
-        border-radius: 6px 6px 2px 2px;
+        display: block;
+        height: 100%;
+        min-width: 16px;
+        border-radius: inherit;
         background: color-mix(in oklab, var(--tone) 28%, var(--th-bg));
       }
       .ovarch2-pipeline__stage.is-active .ovarch2-pipeline__bar {
         background: color-mix(in oklab, var(--tone) 52%, var(--th-bg));
+      }
+      .ovarch2-pipeline__stage.is-active .ovarch2-pipeline__track {
         box-shadow: 0 0 0 3px color-mix(in oklab, var(--tone) 14%, transparent);
       }
       .ovarch2-flow {
@@ -227,15 +240,9 @@ function Round2Styles() {
         }
         .ovarch2-pipeline {
           grid-template-columns: 1fr;
-          min-height: 0;
         }
         .ovarch2-pipeline__stage {
-          grid-template-columns: 82px minmax(0, 1fr);
-          align-items: center;
-          min-height: 0;
-        }
-        .ovarch2-pipeline__bar {
-          height: 18px !important;
+          grid-template-columns: minmax(88px, 0.42fr) minmax(0, 1fr);
         }
         .ovarch2-flow__boundary {
           min-height: 54px;
@@ -420,7 +427,7 @@ export function WritePipelineBottleneck({ t }) {
       t={t}
       kicker={tt(t, { en: 'Write pipeline', zh: '写入链路' })}
       title={tt(t, { en: 'The bottleneck is a chain, not one database call', zh: '瓶颈是一条链，而不是一次数据库调用' })}
-      aside={tt(t, { en: 'Bar height approximates relative latency pressure.', zh: '柱高表示相对延迟压力。' })}
+      aside={tt(t, { en: 'Bar length approximates relative latency pressure.', zh: '条形长度表示相对延迟压力。' })}
     >
       <div className="ovarch2-pipeline" role="list">
         {stages.map(stage => (
@@ -433,10 +440,12 @@ export function WritePipelineBottleneck({ t }) {
             onClick={() => setSelected(stage.key)}
             style={{ '--tone': stage.tone, textAlign: 'left', borderRadius: 8, padding: 8 }}
           >
-            <div className="ovarch2-pipeline__bar" style={{ height: `${stage.cost * 1.55}px` }} />
-            <div>
+            <div className="ovarch2-pipeline__label">
               <strong>{stage.title}</strong>
               <div className="ovarch2__mono">{stage.cost}</div>
+            </div>
+            <div className="ovarch2-pipeline__track" aria-hidden="true">
+              <span className="ovarch2-pipeline__bar" style={{ width: `${stage.cost}%` }} />
             </div>
           </button>
         ))}
