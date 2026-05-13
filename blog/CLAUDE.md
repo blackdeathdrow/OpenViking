@@ -9,6 +9,8 @@ You are an agent adding a post to the **OpenViking Blog**. This document is the 
 For the full review trail and tradeoffs, read the case studies:
 [`docs/case-studies/openviking-context-post.md`](docs/case-studies/openviking-context-post.md) and
 [`docs/case-studies/openviking-context-architecture-post.md`](docs/case-studies/openviking-context-architecture-post.md).
+For blog-wide mobile/PWA polish, also read
+[`docs/case-studies/mobile-pwa-polish.md`](docs/case-studies/mobile-pwa-polish.md).
 
 1. Build for two readers: the HTML page is for humans, while `/post/<slug>/llm.txt` is for agents. Keep `llm.txt` clean, source-like, and English-only when requested; expose it through page metadata and `/llms.txt`, not through visible helper copy.
 2. Let the article structure drive the TOC. Use `H2` for major sections, `H3` for TOC-level blocks, and `H4` inside cards/panels. Do not add TOC index numbers. Folding is opt-in via `TOC foldable`; default should stay expanded.
@@ -16,6 +18,7 @@ For the full review trail and tradeoffs, read the case studies:
 4. Treat covers as editorial signals, not diagrams. For OpenViking architecture posts, prefer airy watercolor on cream paper with generous negative space, subtle OV logo hints, warm gold/sage/graphite palettes, and no literal keys, locks, oversized logos, dense diagrams, or blue/purple-dominant branding. Keep high-res imagery for post hero/OG, and provide a lighter `cardCover` for index cards when the source image is large.
 5. Respect the post language end to end. Switching language must update body, shell-adjacent UI such as TOC, dates, and labels without requiring refresh.
 6. For Lark-derived posts, preserve source provenance in metadata, but remove internal rendering notes from the human article. Validate custom component states in generated HTML; small CSS details like inline progress fills can break visible UI.
+7. For phone-view polish, use screenshots as the source of truth. Keep the first viewport content-first, collapse dense controls to one line by default, use real short mobile labels instead of clipped text, and add PWA icons/manifest without a service worker unless offline caching is explicitly wanted.
 
 ---
 

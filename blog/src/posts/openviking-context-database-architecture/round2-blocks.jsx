@@ -306,7 +306,7 @@ export function ArchitectureStack({ t }) {
   return (
     <BlockShell
       t={t}
-      kicker={tt(t, { en: 'Architecture stack', zh: '架构栈' })}
+      kicker={tt(t, { en: 'Arch stack', zh: '架构栈' })}
       title={tt(t, { en: 'A database-shaped stack for agent context', zh: '面向 Agent 上下文的数据库化栈' })}
       aside={tt(t, { en: 'Read top-down for request flow, bottom-up for ownership.', zh: '自上而下看请求流，自下而上看能力归属。' })}
     >

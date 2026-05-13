@@ -57,7 +57,9 @@ export function IndexView({ lang, t, theme, navigate, S, formatDate }) {
   const all = useMemo(() => getAllPosts(), []);
   const tags = useMemo(() => getAllTags(), []);
   const [filter, setFilter] = useState('all');
+  const [filtersExpanded, setFiltersExpanded] = useState(false);
   const [sort, setSort] = useState('newest');
+  const compactFilters = useMemo(() => ['all', ...tags.slice(0, 2)], [tags]);
 
   const list = useMemo(() => {
     let xs = filter === 'all' ? all : all.filter(p => (p.meta.tags || []).includes(filter));
@@ -67,6 +69,10 @@ export function IndexView({ lang, t, theme, navigate, S, formatDate }) {
 
   const featured = list[0];
   const rest = list.slice(1);
+  const selectFilter = (next) => {
+    setFilter(next);
+    setFiltersExpanded(!compactFilters.includes(next));
+  };
 
   return (
     <main className="b-shell__main">
@@ -78,15 +84,24 @@ export function IndexView({ lang, t, theme, navigate, S, formatDate }) {
 
       <section className="b-list">
         <div className="b-list__bar">
-          <div className="b-list__filters">
-            <button className={`b-list__filter ${filter === 'all' ? 'is-active' : ''}`} onClick={() => setFilter('all')}>{S.filterAll}</button>
+          <div className={`b-list__filters ${filtersExpanded ? 'is-expanded' : ''}`}>
+            <button className={`b-list__filter ${filter === 'all' ? 'is-active' : ''}`} onClick={() => selectFilter('all')}>{S.filterAll}</button>
             {tags.map(tg => (
-              <button key={tg} className={`b-list__filter ${filter === tg ? 'is-active' : ''}`} onClick={() => setFilter(tg)}>#{tg}</button>
+              <button key={tg} className={`b-list__filter ${filter === tg ? 'is-active' : ''}`} onClick={() => selectFilter(tg)}>#{tg}</button>
             ))}
           </div>
+          <button
+            type="button"
+            className="b-list__filter b-list__more"
+            aria-expanded={filtersExpanded}
+            onClick={() => setFiltersExpanded(v => !v)}
+          >
+            {filtersExpanded ? S.filterLess : S.filterMore}
+          </button>
           <div className="b-list__sort">
             <button className="b-list__filter" onClick={() => setSort(sort === 'newest' ? 'oldest' : 'newest')}>
-              {sort === 'newest' ? S.sortNewest : S.sortOldest} ↕
+              <span className="b-list__sort-full">{sort === 'newest' ? S.sortNewest : S.sortOldest}</span>
+              <span className="b-list__sort-short">{sort === 'newest' ? S.sortNewestShort : S.sortOldestShort}</span> ↕
             </button>
           </div>
         </div>
