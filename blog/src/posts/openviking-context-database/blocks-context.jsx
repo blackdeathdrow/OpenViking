@@ -6,6 +6,7 @@ import {
 
 const GITHUB_URL = 'https://github.com/volcengine/OpenViking';
 const DOCS_URL = 'https://docs.openviking.ai/';
+const DISCORD_URL = 'https://discord.gg/FyTkZ3ZKKm';
 const OPENCLAW_GUIDE_URL = 'https://github.com/volcengine/OpenViking/blob/main/examples/openclaw-plugin/INSTALL-ZH.md';
 
 const resourceSections = [
@@ -17,7 +18,7 @@ const resourceSections = [
     bullets: [
       ['阅读代码和提 Issue', <A href={GITHUB_URL}>volcengine/OpenViking</A>],
       ['技术文档站', <A href={DOCS_URL}>docs.openviking.ai</A>],
-      ['社区反馈', '用于收集使用问题、bug 报告和产品预期。'],
+      ['社区反馈', <>加入 <A href={DISCORD_URL}>Discord 社区</A>，反馈使用问题、bug 和产品预期。</>],
       ['OpenClaw 集成指南', <A href={OPENCLAW_GUIDE_URL}>OpenViking memory plugin guide</A>],
     ],
   },

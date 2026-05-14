@@ -6,6 +6,7 @@ import {
 
 const GITHUB_URL = 'https://github.com/volcengine/OpenViking';
 const DOCS_URL = 'https://docs.openviking.ai/';
+const DISCORD_URL = 'https://discord.gg/FyTkZ3ZKKm';
 const OPENCLAW_GUIDE_URL = 'https://github.com/volcengine/OpenViking/blob/main/examples/openclaw-plugin/INSTALL-ZH.md';
 
 const foundation = [
@@ -17,7 +18,7 @@ const foundation = [
     items: [
       ['Code and issues', <A href={GITHUB_URL}>volcengine/OpenViking</A>],
       ['Technical docs', <A href={DOCS_URL}>docs.openviking.ai</A>],
-      ['Feedback', 'Public issues and discussions collect usage questions, bug reports, and product expectations.'],
+      ['Community feedback', <>Join the <A href={DISCORD_URL}>Discord community</A> for usage questions, bug reports, and product expectations.</>],
       ['OpenClaw integration', <A href={OPENCLAW_GUIDE_URL}>OpenViking memory plugin guide</A>],
     ],
   },

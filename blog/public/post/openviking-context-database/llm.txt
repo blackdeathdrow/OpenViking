@@ -18,6 +18,7 @@ OpenViking mainly provides complete information organization. It also supports c
 
 - GitHub: https://github.com/volcengine/OpenViking
 - Docs: https://docs.openviking.ai/
+- Discord: https://discord.gg/FyTkZ3ZKKm
 - OpenClaw memory plugin guide: https://github.com/volcengine/OpenViking/blob/main/examples/openclaw-plugin/INSTALL-ZH.md
 - Human page: https://blog.openviking.ai/post/openviking-context-database/
 - Agent-readable page: https://blog.openviking.ai/post/openviking-context-database/llm.txt
