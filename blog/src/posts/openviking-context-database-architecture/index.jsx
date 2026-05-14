@@ -11,7 +11,6 @@ import {
   WritePipelineBottleneck,
 } from './round2-blocks';
 
-const SOURCE_URL = 'https://bytedance.larkoffice.com/wiki/OotPwGm2wiJdh8kNSKtc9owknme';
 const LLM_PATH = '/post/openviking-context-database-architecture/llm.txt';
 
 const card = {
@@ -467,9 +466,6 @@ export default {
     category: { en: 'Arch', zh: '架构' },
     tags: ['openviking', 'arch', 'context', 'agent'],
     languages: ['en', 'zh'],
-    sourceUrl: SOURCE_URL,
-    sourceTitle: 'OpenViking 上下文数据库架构介绍',
-    sourceUpdatedAt: '2026-05-12',
     llmPath: LLM_PATH,
     authors: [
       { name: 'maojia', github: 'MaojiaSheng' },

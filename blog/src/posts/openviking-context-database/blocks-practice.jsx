@@ -6,9 +6,9 @@ import {
 
 const LLM_PATH = '/post/openviking-context-database/llm.txt';
 const HUMAN_PATH = '/post/openviking-context-database/';
-const SOURCE_URL = 'https://bytedance.larkoffice.com/wiki/J3powcjKZik1qxkJPNfcvqcknyf';
 const OPENVIKING_REPO = 'https://github.com/volcengine/OpenViking';
 const OPENVIKING_DOCS = 'https://docs.openviking.ai/';
+const OPENCLAW_GUIDE = 'https://github.com/volcengine/OpenViking/blob/main/examples/openclaw-plugin/INSTALL-ZH.md';
 
 function useStackNav(items, idPrefix) {
   const keys = useMemo(() => items.map(item => item.key), [items]);
@@ -195,10 +195,17 @@ export function DatabaseComparison() {
       </div>
 
       <Table
-        caption="原文能力表的压缩版：重点保留 OpenViking、向量库、文件系统的边界。"
+        caption="公开文章摘要版：重点保留 OpenViking、向量库、文件系统的产品边界。"
         headers={['产品特性', 'OpenViking 上下文数据库', 'VikingDB 向量库', 'LocalFS / AGFS / TOS 文件系统']}
         rows={comparisonRows}
       />
+
+      <Callout type="info" title="更多实现细节">
+        <P>
+          相关实现细节可继续阅读 <A href={OPENVIKING_DOCS}>OpenViking 技术文档</A>。公开文章保留产品边界，
+          避免把部署环境或特定平台细节混进核心概念。
+        </P>
+      </Callout>
 
       <Pull>
         向量库解决“语义怎么排”，文件系统解决“结构怎么走”，OpenViking 解决“Agent 如何把上下文当作数据使用”。
@@ -249,7 +256,7 @@ const documentStages = [
     label: '摘要层级',
     tone: '#b5533f',
     title: 'L0 摘要、overview 和原文组成阅读路径',
-    body: 'ls、tree、find 等命令会返回轻量摘要；abstract 给完整摘要；overview 帮助了解内部结构；read 才进入原文。',
+    body: 'ls、tree、find 等命令会返回轻量摘要；abstract 给完整摘要；overview 帮助了解内容结构；read 才进入原文。',
     output: '上下文读取路径从粗到细，避免“读窗口陷阱”。',
     agentAction: '先摘要，后 overview，最后 read。只有证据不足时才展开全文。',
   },
@@ -334,7 +341,7 @@ const adoptionSteps = [
     label: 'Server mode',
     tone: '#4a8c5a',
     title: '优先用服务化方式快速验证',
-    body: 'OpenViking 可以嵌入 Python 程序，但原文主要推荐 Server mode。PC、devbox、ECS 都适合先做验证。',
+    body: 'OpenViking 可以嵌入 Python 程序，也可以用 Server mode 快速验证。本地机器、云主机或 ECS 都适合先跑通服务。',
     command: `uv venv openviking-env
 source openviking-env/bin/activate
 uv pip install openviking --upgrade
@@ -351,9 +358,9 @@ nohup openviking-server > ~/.openviking/openviking.log 2>&1 &`,
     command: `ov add-resource https://github.com/volcengine/OpenViking
 ov add-resource https://arxiv.org/pdf/2602.09540
 ov add-resource ./team_building.jpg
-ov add-resource /Users/bytedance/Documents/project.docx
-ov add-resource ./团队文档库.zip`,
-    check: '私有仓库要确认服务器可以 git clone，并把域名加入 parsers.code.gitlab_domains。',
+ov add-resource ./project.docx
+ov add-resource ./team-docs.zip`,
+    check: '私有仓库要确认服务端具备访问权限，并按部署文档配置 Git 域名和凭证。',
   },
   {
     key: 'discover',
@@ -477,21 +484,20 @@ export function OpenClawMemoryPractice() {
 
       <Callout type="info" title="安装和集成路径">
         <P>
-          如果还没有安装 OpenClaw，原文建议在 devbox Debian/Ubuntu 环境验证，并选择 X86 通用机型 veLinux 2.0。
+          如果还没有安装 OpenClaw，可以按官方安装方式先完成本地验证。
           安装后，把 OpenViking 的 OpenClaw memory plugin 安装文档交给 OpenClaw，让它按文档部署为内置记忆组件。
         </P>
       </Callout>
 
-      <Pre lang="bash" filename="openclaw-openviking-memory.sh">{`export https_proxy=http://sys-proxy-rd-relay.byted.org:8118
-curl -fSL https://openclaw.ai/install.sh | bash
+      <Pre lang="bash" filename="openclaw-openviking-memory.sh">{`curl -fSL https://openclaw.ai/install.sh | bash
 
 # Tell OpenClaw to follow this guide:
-# https://github.com/volcengine/OpenViking/blob/main/examples/openclaw-memory-plugin/INSTALL-ZH.md
+# ${OPENCLAW_GUIDE}
 
 ov add-memory ./2026-03-04/memory-2026-03-04.md`}</Pre>
 
       <Quote cite="OpenViking 分享原文">
-        演示 B：让你的龙虾具备更好的记忆。
+        演示 B：让 OpenClaw 具备更好的记忆。
       </Quote>
 
       <div className="ovp-grid ovp-grid--3">
@@ -576,19 +582,19 @@ const wrapSections = {
       </Ul>
     ),
   },
-  internal: {
-    label: '站内接入',
+  deployment: {
+    label: '部署演进',
     tone: '#1B365D',
-    title: '从本地验证走向合规部署',
+    title: '从本地验证走向托管和分布式部署',
     body: (
       <>
         <P>
-          原文提到，OpenViking 将支持公司站内 VikingDB ByteRec 版，从而可以在海外进行合规部署。
-          Viking 内部技术社区也会完成改造以支持 OpenViking。
+          公开文章不展开特定平台路线，而是保留更通用的产品方向：
+          OpenViking 当前适合先用本地或自托管服务验证，后续会继续增强云托管、分布式和稳定升级能力。
         </P>
         <P>
           这部分信息的重点，是把上下文数据库从个人工具变成团队和组织级基础设施：
-          有部署规范、有 Oncall/反馈入口、有合规边界，也能接入现有检索和推荐底座。
+          有部署规范、反馈入口、权限边界，也能接入现有检索和推荐底座。
         </P>
       </>
     ),
@@ -601,7 +607,7 @@ const wrapSections = {
       <Ol>
         <Li>社区生态建设、标准和协议推广。</Li>
         <Li>增强单机运维能力，推出稳定版本，支持平滑升级。</Li>
-        <Li>增强多模态、记忆和技能检索能力，打通商业化内容理解接口。</Li>
+        <Li>增强多模态、记忆和技能检索能力，打通更完整的内容理解接口。</Li>
         <Li>建设分布式能力，对接公有云，实现更可靠的分布式一致性。</Li>
       </Ol>
     ),
@@ -661,12 +667,12 @@ export function CoreTakeawaysAndRoadmap() {
 
 export function AgentReadableContract() {
   return (
-    <section className="ovp-section" id="agent-readable-contract" data-llm-txt={LLM_PATH} data-source-url={SOURCE_URL}>
+    <section className="ovp-section" id="agent-readable-contract" data-llm-txt={LLM_PATH} data-docs-url={OPENVIKING_DOCS}>
       <div className="ovp-kicker">human html and agent text</div>
       <H3>人读 HTML，Agent 读 llm.txt</H3>
       <P>
         这篇文章需要同时服务两类读者：人类需要重新编排后的叙事、节奏和交互；
-        Agent 需要低噪声、可直接引用、保留原始结构的 markdown。
+        Agent 需要低噪声、可直接引用、并与中英文正文保持内容一致的 markdown。
       </P>
 
       <div className="ovp-route">
@@ -681,8 +687,8 @@ export function AgentReadableContract() {
           </div>
         </div>
         <div className="ovp-route__item">
-          <div className="ovp-tile__label">source lark wiki</div>
-          <div className="ovp-route__value"><A href={SOURCE_URL}>原始飞书文档</A></div>
+          <div className="ovp-tile__label">public docs</div>
+          <div className="ovp-route__value"><A href={OPENVIKING_DOCS}>docs.openviking.ai</A></div>
         </div>
       </div>
 
@@ -693,6 +699,7 @@ export function AgentReadableContract() {
           [<InlineCode key="meta">meta name="llm:content"</InlineCode>, '显式告诉 Agent 当前页面的 llm.txt 路径。'],
           [<InlineCode key="data">data-llm-txt</InlineCode>, '文章主体节点保留可被页面解析器读取的路径。'],
           [<InlineCode key="llms">/llms.txt</InlineCode>, '站点级索引可以列出可供 Agent 读取的文章清单。'],
+          [<InlineCode key="docs">docs.openviking.ai</InlineCode>, '公开技术文档承接安装、部署和实现细节。'],
         ]}
       />
 

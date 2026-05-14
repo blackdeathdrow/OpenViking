@@ -4,21 +4,21 @@ import {
   Table, Tag, Ul, Ol,
 } from '../../blog-components';
 
-const SOURCE_URL = 'https://bytedance.larkoffice.com/wiki/J3powcjKZik1qxkJPNfcvqcknyf';
 const GITHUB_URL = 'https://github.com/volcengine/OpenViking';
 const DOCS_URL = 'https://docs.openviking.ai/';
+const OPENCLAW_GUIDE_URL = 'https://github.com/volcengine/OpenViking/blob/main/examples/openclaw-plugin/INSTALL-ZH.md';
 
 const foundation = [
   {
     key: 'resources',
     label: 'Resources',
     title: 'Start from the runnable project, not the slogan',
-    body: 'The original talk frames OpenViking as both an open-source project and a new interface for agent context management. The useful entry points are the repository, the technical docs, the community feedback channel, and the OpenClaw integration guide.',
+    body: 'The public article frames OpenViking as both an open-source project and a new interface for agent context management. The useful entry points are the repository, the technical docs, the community feedback channel, and the OpenClaw integration guide.',
     items: [
       ['Code and issues', <A href={GITHUB_URL}>volcengine/OpenViking</A>],
       ['Technical docs', <A href={DOCS_URL}>docs.openviking.ai</A>],
       ['Community feedback', 'Used to collect usage questions, bug reports, and product expectations.'],
-      ['OpenClaw integration', 'OpenViking can be installed as a memory layer for autonomous agents.'],
+      ['OpenClaw integration', <A href={OPENCLAW_GUIDE_URL}>OpenViking memory plugin guide</A>],
     ],
   },
   {
@@ -132,17 +132,21 @@ ov status`,
 ];
 
 const comparisonRows = [
-  ['Managed data', 'Files, text, links, conversations, summaries', 'Vectors and scalar metadata', 'Files and folders'],
-  ['Semantic retrieval', 'Yes, backed by vector search', 'Yes, core capability', 'No, requires external tooling'],
+  ['Data operations', 'Add, delete, query, update', 'Add, delete, query, update', 'Add, delete, update; query depends on other applications'],
+  ['Input format', 'Files, text, links, conversation history', 'Vectors, scalar metadata, and vectorizable content', 'Files'],
+  ['Semantic retrieval', 'Yes, backed by vector search', 'Yes, core capability', 'No'],
+  ['Keyword retrieval', 'Yes, through sparse vectors or grep', 'Yes, through sparse vectors and keyword indexes', 'Yes, through grep'],
   ['Hierarchy', 'Preserved and exposed to agents', 'Usually not preserved', 'Native capability'],
-  ['Automatic parsing', 'Built into the ingestion path', 'Usually outside the vector database', 'Not built in'],
-  ['Summaries', 'L0 summaries, abstracts, and overview paths', 'Not native', 'Not native'],
-  ['Agentic reading', 'ls, tree, find, abstract, overview, read', 'Not directly exposed', 'Traversal works, but semantic search is missing'],
-  ['Memory / bot layer', 'Native direction of the product', 'Not included', 'Not included'],
+  ['Automatic parsing and summaries', 'Automatic parsing, L0 summaries, and overview paths', 'Usually outside the vector database', 'Not built in'],
+  ['Agentic reading', 'ls, tree, find, abstract, overview, read', 'Not directly exposed', 'Traversal works, but semantic processing is missing'],
+  ['Data isolation', 'Account, user, and agent dimensions', 'Scalar metadata', 'Partly through user/group controls'],
+  ['Built-in capabilities', 'Native memory plugin, bot, and native RAG direction', 'Not included', 'Not included'],
+  ['Deployment shape', 'Local/self-hosted today; managed and distributed options are roadmap items', 'Managed cloud service', 'Local or object storage'],
+  ['Original files', 'Not retained by default; still being refined', 'Not retained', 'Retained'],
 ];
 
 const adoptionSteps = [
-  ['Deploy the service', 'Start with server mode on a PC, devbox, or ECS instance. Validate status and logs before adding team data.'],
+  ['Deploy the service', 'Start with server mode on a local workstation, cloud VM, or ECS instance. Validate status and logs before adding team data.'],
   ['Ingest stable sources', 'Start with code repositories and durable documents. Add meeting notes, chats, and external materials later.'],
   ['Teach agents the reading path', 'Prefer ls and find first, then tree, abstract, overview, and only then read.'],
   ['Operationalize skills and memory', 'Treat workflows and memories as context resources instead of scattered agent settings.'],
@@ -391,10 +395,16 @@ export function EnglishPracticeBlocks() {
           A vector database answers semantic ranking questions. A file system gives humans and agents a familiar traversal model. OpenViking uses both ideas, but exposes a higher-level interface for agent context.
         </P>
         <Table
-          caption="A compressed product boundary table."
+          caption="A public-facing product boundary summary."
           headers={['Capability', 'OpenViking context database', 'Vector database', 'File system']}
           rows={comparisonRows}
         />
+        <Callout type="info" title="More implementation detail">
+          <P>
+            The public article keeps the product boundary in view and leaves environment-specific deployment detail to the
+            {' '}<A href={DOCS_URL}>OpenViking technical docs</A>.
+          </P>
+        </Callout>
         <Quote cite="Product boundary">
           Vector search answers what is semantically close. File systems answer where something lives. A context database answers how an agent should use the material.
         </Quote>
@@ -437,7 +447,7 @@ export function EnglishPracticeBlocks() {
         </div>
         <Cols count={2}>
           <Col>
-            <H4>Multi-repository technical question</H4>
+            <H4>Demo A: multi-repository technical question</H4>
             <P>
               The motivating case is answering a real engineering question across historical repositories and design documents, not a toy single-repo code search task.
             </P>
@@ -467,14 +477,17 @@ export function EnglishPracticeBlocks() {
             ['Scattered team knowledge', 'Unify code, documents, meetings, chats, and references in the context database.'],
           ]}
         />
+        <Callout type="note" title="Demo B">
+          <P>Give OpenClaw better memory by turning useful preferences, constraints, facts, and outcomes into searchable context resources.</P>
+        </Callout>
         <Pre lang="bash" filename="openclaw-memory.sh">{`curl -fSL https://openclaw.ai/install.sh | bash
 # Follow the OpenViking memory plugin guide:
-# https://github.com/volcengine/OpenViking/blob/main/examples/openclaw-memory-plugin/INSTALL-ZH.md
+# ${OPENCLAW_GUIDE_URL}
 ov add-memory ./2026-03-04/memory-2026-03-04.md`}</Pre>
       </section>
 
       <section>
-        <H3 id="en-vikingbot">VikingBot and Feedback Loop</H3>
+        <H3 id="en-vikingbot">Demo C: VikingBot and Feedback Loop</H3>
         <P>
           VikingBot demonstrates the same context layer through a native agent interface. It lets a team test ingestion quality, retrieval quality, summaries, and reading paths through conversation.
         </P>

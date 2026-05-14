@@ -1,7 +1,6 @@
 # OpenViking Context Database Architecture
 
 Source title: OpenViking Context Database Architecture
-Source URL: https://bytedance.larkoffice.com/wiki/OotPwGm2wiJdh8kNSKtc9owknme
 Published: 2026-05-12
 Author: maojia
 

@@ -4,22 +4,21 @@ import {
   Table, Tag, Ul,
 } from '../../blog-components';
 
-const SOURCE_URL = 'https://bytedance.larkoffice.com/wiki/J3powcjKZik1qxkJPNfcvqcknyf';
 const GITHUB_URL = 'https://github.com/volcengine/OpenViking';
 const DOCS_URL = 'https://docs.openviking.ai/';
+const OPENCLAW_GUIDE_URL = 'https://github.com/volcengine/OpenViking/blob/main/examples/openclaw-plugin/INSTALL-ZH.md';
 
 const resourceSections = [
   {
     key: 'resources',
     label: '相关资源',
-    title: '从代码、文档到社区反馈，原文先给出可追溯入口',
-    copy: '这不是一篇只讲概念的分享。原始飞书内容一开始就把 OpenViking 的代码仓库、技术文档站、外部技术社区、团队知识库和相关阅读放在同一组入口里，方便读者把理念和可运行项目对上。',
+    title: '从代码、文档到社区反馈，公开文章先给出可追溯入口',
+    copy: '这不是一篇只讲概念的分享。公开版本把 OpenViking 的代码仓库、技术文档站、社区反馈入口和 OpenClaw 集成指南放在同一组入口里，方便读者把理念和可运行项目对上。',
     bullets: [
       ['阅读代码和提 Issue', <A href={GITHUB_URL}>volcengine/OpenViking</A>],
       ['技术文档站', <A href={DOCS_URL}>docs.openviking.ai</A>],
-      ['外部公开技术社区', '原文通过社区卡片承载，用于收集讨论、反馈和使用问题。'],
-      ['团队内部知识库', 'About Team Viking | 团队空间介绍。'],
-      ['相关阅读', 'OpenClaw 集成 OpenViking，升级长期记忆。'],
+      ['社区反馈', '用于收集使用问题、bug 报告和产品预期。'],
+      ['OpenClaw 集成指南', <A href={OPENCLAW_GUIDE_URL}>OpenViking memory plugin guide</A>],
     ],
   },
   {
@@ -88,8 +87,8 @@ const primitives = [
     label: 'Tools',
     fullName: 'Tools / MCP',
     tone: '#7A4F9A',
-    summary: '把内部接口、函数和系统动作暴露给模型。',
-    description: '工具调用通过多种范式把内部接口和内部函数实现暴露给大模型调用，提供初步系统集成能力。',
+    summary: '把系统接口、函数和外部动作暴露给模型。',
+    description: '工具调用通过多种范式把系统接口和函数实现暴露给大模型调用，提供初步系统集成能力。',
     advantage: '可以在工具类里加入校验、检查、约束和可观测能力，让模型初步具备与真实复杂环境交互的能力。',
     limitation: '实现复杂，依赖人工包装调用函数。工具数量扩展后，子流程可控不等于宏观决策可靠。',
     openvikingAngle: '工具让 Agent 能行动，但行动前仍要知道读什么、信什么、为什么调用。上下文数据库补的是决策材料。',
@@ -161,7 +160,7 @@ const painPoints = [
     label: 'OpenClaw',
     tone: '#4A8C5A',
     title: '刚说过的要求没有成为长期约束',
-    question: '你的小龙虾是否把昨天刚说过的要求抛诸脑后，让你每次都要花费很多时间重试任务和补充要求？',
+    question: '你的 OpenClaw agent 是否把昨天刚说过的要求抛诸脑后，让你每次都要花费很多时间重试任务和补充要求？',
     context: '自主智能体要完成中长周期任务，必须记住偏好、约束、修正历史和失败经验。',
     gap: '如果记忆只是对话记录或一次性摘要，Agent 很容易在新任务里丢掉关键约束，导致用户反复补充同一批上下文。',
     desired: '记忆应当被组织成可检索、可更新、可隔离的资源，而不是越来越长的聊天历史。'
@@ -171,7 +170,7 @@ const painPoints = [
     label: '知识编排',
     tone: '#8B6F2F',
     title: '知识散落在太多来源里',
-    question: '你的知识是否分散于代码仓库、飞书文档、聊天记录、会议纪要、外部文献、团队标准，最终变成你在管理智能体？',
+    question: '你的知识是否分散于代码仓库、协作文档、聊天记录、会议纪要、外部文献、团队标准，最终变成你在管理智能体？',
     context: '团队知识不是单一知识库。它会跨文件、跨工具、跨组织边界存在，并且格式、权限和更新节奏都不同。',
     gap: '如果每次任务都靠人手动提供资料，Agent 只是把信息编排压力转移给用户，复杂任务反而更累。',
     desired: '上下文数据库应当统一接入多种来源，并提供搜索、摘要、层级浏览和按需读取能力。'
@@ -181,7 +180,7 @@ const painPoints = [
     label: '观点对齐',
     tone: '#7A4F9A',
     title: '交付前没有充分理解人的真实标准',
-    question: '当 Leader 交代一件任务，你是否能充分 get TA 的观点，并把你的理解准确转述给 Agent？',
+    question: '当负责人交代一件任务，你是否能充分理解对方的观点，并把你的理解准确转述给 Agent？',
     context: '很多工作失败不是因为模型不会写，而是因为它没有掌握决策者的评价标准、历史偏好和上下文暗线。',
     gap: 'Vibe 出来的结果可能表面完整，但与组织语境、质量标准或具体偏好错位，交付时才暴露风险。',
     desired: '上下文系统需要沉淀人和团队的观点、标准、历史反馈，并在任务前推荐相关约束。'
@@ -303,7 +302,7 @@ export function ResourceDeck() {
       <div className="ovb-kicker">source and framing</div>
       <H3 id="resource-deck-title">相关资源、分享背景与分享重点</H3>
       <Lead>
-        原文开头先把 OpenViking 放进一个具体场景：这是一个开源项目，也是一套给 Agent 管理上下文的数据库范式。
+        文章开头先把 OpenViking 放进一个具体场景：这是一个开源项目，也是一套给 Agent 管理上下文的数据库范式。
       </Lead>
       <AnchorStrip items={resourceSections} prefix="ovb-resource" label="资源与分享信息导航" />
       <div className="ovb-stack">
@@ -329,8 +328,9 @@ export function ResourceDeck() {
       </div>
       <Callout type="info" title="阅读线索">
         <P>
-          如果把这一段当作文章入口，重点不是“OpenViking 有哪些链接”，而是
-          <A href={SOURCE_URL}>飞书原文</A>把代码、文档、社区反馈、团队知识和 OpenClaw 实践同时纳入上下文工程讨论。
+          如果把这一段当作文章入口，重点不是“OpenViking 有哪些链接”，而是公开资源把代码、文档、
+          社区反馈和 OpenClaw 实践同时纳入上下文工程讨论。需要实现细节时，可以继续阅读
+          <A href={DOCS_URL}> OpenViking 技术文档</A>。
         </P>
       </Callout>
     </section>
@@ -360,7 +360,7 @@ export function ContextStatusBackdrop() {
         <Col>
           <H4>痛点</H4>
           <P>
-            当团队知识散落在代码仓库、飞书文档、聊天记录、会议纪要、外部文献和团队标准里，人会被迫充当上下文路由器。
+            当团队知识散落在代码仓库、协作文档、聊天记录、会议纪要、外部文献和团队标准里，人会被迫充当上下文路由器。
             OpenViking 的切入点就是把这件事数据库化。
           </P>
         </Col>

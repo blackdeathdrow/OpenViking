@@ -185,15 +185,13 @@ const cliFlows = [
     filename: 'resources.sh',
     code: `# 添加资料和文件
 ov add-resource https://github.com/volcengine/OpenViking
-ov add-resource https://code.byted.org/lagrange/viking_python_client
-ov add-resource git@code.byted.org:lagrange/viking.git
 ov add-resource https://arxiv.org/pdf/2602.09540
 
 ov add-resource ./team_building.jpg
-ov add-resource /Users/bytedance/Documents/profile.pdf
-ov add-resource /Users/bytedance/Documents/project.docx
-ov add-resource /Users/bytedance/Photo/Travels/2026/ --include "*.jpg,*.jpeg,*.png"
-ov add-resource ./团队文档库.zip`,
+ov add-resource ./profile.pdf
+ov add-resource ./project.docx
+ov add-resource ./photos/2026/ --include "*.jpg,*.jpeg,*.png"
+ov add-resource ./team-docs.zip`,
   },
   {
     key: 'manage',
@@ -218,13 +216,13 @@ ov rm -r viking://resources/photo/20260102/`,
 ov ls
 
 # 语义查找信息入口
-ov find "When did Maojia join Bytedance?"
+ov find "Which design notes explain OpenViking memory?"
 ov find "OpenViking AGFSClient"
-ov find "How does OpenViking uses VikingDB?" --uri=viking://resources/code/volcengine/OpenViking
+ov find "How does OpenViking use VikingDB?" --uri=viking://resources/code/volcengine/OpenViking
 
 # 进一步探索和发现相关文件
 ov ls viking://resources/code/volcengine/OpenViking/docs/zh
-ov tree viking://resources/code/volcengine/OpenViking/examples/openclaw-memory-plugin/
+ov tree viking://resources/code/volcengine/OpenViking/examples/openclaw-plugin/
 ov glob "openclaw*" --uri viking://resources/code/volcengine/OpenViking/examples/ -n 10`,
   },
   {
@@ -237,7 +235,7 @@ ov glob "openclaw*" --uri viking://resources/code/volcengine/OpenViking/examples
 ov abstract viking://resources/code/volcengine/OpenViking
 ov abstract viking://resources/photo/20260102/
 
-# 阅读概述了解内部结构
+# 阅读概述了解内容结构
 ov overview viking://resources/photo/20260102/
 ov overview viking://resources/code/volcengine/OpenViking/examples/
 

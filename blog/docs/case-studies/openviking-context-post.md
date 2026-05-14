@@ -40,6 +40,13 @@ The first implementation pass should establish the article frame, not pretend to
 - The page uses `cardCover || cover` so large hero/OG artwork does not have to be used on the index card.
 - The official docs entry should point to `https://docs.openviking.ai/`. Specific examples may still reference exact GitHub paths such as `docs/zh/concepts/...` when the source requires them.
 
+## Public Cleanup Pass — 2026-05-14
+
+- Treat "compressed" capability tables as public-facing summaries, not as permission to drop important product boundaries. For this post, zh, en, and `llm.txt` now use the same public OpenViking / vector database / filesystem comparison shape and link to public docs for deeper implementation detail.
+- "Softened demo framing" means the first public rewrite turned explicit Demo A/B/C sections into more general prose. The cleanup pass restored public demo labels for the multi-repository technical question, OpenClaw memory, and VikingBot so readers can see the original talk structure without exposing internal-only artifacts.
+- The public-safety pass must cover generated agent text, not only the React article. Remove internal deployment routes, private platform names, proxy commands, private source links, local employee home paths, and speaker/person rosters from `llm.txt` when they are not also intended for the public zh/en article.
+- Public provenance should point readers to GitHub, `docs.openviking.ai`, public discussions, and public install guides. Private Lark URLs may be useful while authoring, but should not appear in public page metadata or `/llms.txt` unless explicitly approved.
+
 ## Review Challenges To Expect
 
 - If the first version is too short, the user may expect deeper block-by-block rendering rather than a summary page.

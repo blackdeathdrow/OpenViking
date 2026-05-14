@@ -9,7 +9,6 @@ import { OpenVikingPracticeBlocks } from './blocks-practice.jsx';
 import OpenVikingEnglishBlocks from './blocks-en.jsx';
 
 const LLM_PATH = '/post/openviking-context-database/llm.txt';
-const SOURCE_URL = 'https://bytedance.larkoffice.com/wiki/J3powcjKZik1qxkJPNfcvqcknyf';
 
 const OpenVikingContextDatabaseZh = () => (
   <Article className="ovx-article">
@@ -64,14 +63,11 @@ export default {
     cover: '/assets/covers/openviking-context-database.png',
     cardCover: '/assets/covers/openviking-context-database-card.png',
     publishedAt: '2026-03-10',
-    updatedAt: '2026-05-12',
+    updatedAt: '2026-05-14',
     readingTime: 28,
     category: { zh: '上下文工程', en: 'Context Engineering' },
     tags: ['openviking', 'context', 'agent'],
     languages: ['en', 'zh'],
-    sourceUrl: SOURCE_URL,
-    sourceTitle: 'OpenViking：上下文工程的数据库范式',
-    sourceUpdatedAt: '2026-03-10',
     llmPath: LLM_PATH,
     authors: [
       { name: 'maojia', github: 'MaojiaSheng' },
