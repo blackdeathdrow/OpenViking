@@ -635,6 +635,20 @@ html {
   font-size: 11px;
 }
 
+.zouk-reader-avatar.has-image {
+  overflow: hidden;
+  background: var(--th-bg-2);
+  color: transparent;
+}
+
+.zouk-reader-avatar img {
+  display: block;
+  width: 100%;
+  height: 100%;
+  border-radius: inherit;
+  object-fit: cover;
+}
+
 .zouk-reader-bubble-column {
   min-width: 0;
   flex: 1 1 auto;
@@ -834,6 +848,15 @@ html {
     border-radius: 0;
     background: transparent;
     box-shadow: none;
+    opacity: 1;
+    transform: translate3d(0, 0, 0);
+    transition: opacity 180ms ease, transform 180ms ease;
+  }
+
+  .zouk-reader-panel.is-closing {
+    opacity: 0;
+    transform: translate3d(18px, 0, 0);
+    pointer-events: none;
   }
 
   .zouk-reader-edge-toggle::before {

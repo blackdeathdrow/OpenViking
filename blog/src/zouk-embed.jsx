@@ -66,6 +66,15 @@ function currentSourceUrl() {
   return window.location.href;
 }
 
+function currentGuestPictureUrl() {
+  if (!browserAvailable()) return 'https://blog.openviking.ai/assets/logo.png';
+  try {
+    return new URL('/assets/logo.png', window.location.origin).toString();
+  } catch {
+    return 'https://blog.openviking.ai/assets/logo.png';
+  }
+}
+
 function wsUrlFor(serverUrl, token, workspaceId) {
   const url = new URL('/ws', serverUrl);
   url.protocol = url.protocol === 'https:' ? 'wss:' : 'ws:';
@@ -80,8 +89,28 @@ async function parseJsonResponse(res) {
   return body;
 }
 
+function normalizeAvatarUrl(value = '') {
+  const src = String(value || '').trim();
+  if (!src) return '';
+  return /^(https?:\/\/|data:image\/)/i.test(src) ? src : '';
+}
+
 function normalizeMessage(message) {
   if (!message) return null;
+  const avatarUrl = normalizeAvatarUrl(
+    message.senderPicture
+      || message.sender_picture
+      || message.senderAvatarUrl
+      || message.sender_avatar_url
+      || message.picture
+      || message.avatarUrl
+      || message.avatar_url
+      || message.senderGravatarUrl
+      || message.sender_gravatar_url
+      || message.gravatarUrl
+      || message.gravatar_url
+      || '',
+  );
   return {
     id: message.id || message.messageId,
     content: message.content || '',
@@ -89,6 +118,7 @@ function normalizeMessage(message) {
     senderType: message.senderType || message.sender_type || 'human',
     createdAt: message.createdAt || message.timestamp || new Date().toISOString(),
     channelName: message.channelName || message.channel_name || '',
+    avatarUrl,
   };
 }
 
@@ -102,21 +132,19 @@ function mergeMessage(messages, incoming) {
   return [...messages, incoming].slice(-120);
 }
 
-function buildInjectedContext(sourceUrl, selectedText) {
-  const lines = [
-    '<zouk-context>',
-    `  <url>${escapeContextText(sourceUrl, 1600)}</url>`,
-  ];
-  const selection = compactText(selectedText);
-  if (selection) lines.push(`  <selected-text>${escapeContextText(selection)}</selected-text>`);
+function buildInjectedContext(sourceUrl, referencedText, includeUrl) {
+  const lines = ['<zouk-context>'];
+  if (includeUrl) lines.push(`  <url>${escapeContextText(sourceUrl, 1600)}</url>`);
+  const reference = compactText(referencedText);
+  if (reference) lines.push(`  <referenced-text>${escapeContextText(reference)}</referenced-text>`);
   lines.push('</zouk-context>');
   return lines.join('\n');
 }
 
-function messageWithInjectedContext(message, sourceUrl, selectedText, shouldInject) {
+function messageWithInjectedContext(message, sourceUrl, referencedText, includeUrl, shouldInject) {
   const trimmed = message.trim();
   if (!shouldInject) return trimmed;
-  return `${buildInjectedContext(sourceUrl, selectedText)}\n\n${trimmed}`;
+  return `${buildInjectedContext(sourceUrl, referencedText, includeUrl)}\n\n${trimmed}`;
 }
 
 function parseInjectedMessage(content) {
@@ -130,7 +158,7 @@ function parseInjectedMessage(content) {
     };
     const context = [
       { key: 'url', value: readTag('url') },
-      { key: 'selected text', value: readTag('selected-text') },
+      { key: 'referenced text', value: readTag('referenced-text') || readTag('selected-text') },
     ].filter((item) => item.value);
     return { context: context.length ? context : null, body: text.slice(xmlMatch[0].length).trimStart() };
   }
@@ -145,7 +173,7 @@ function parseInjectedMessage(content) {
     const key = rawKey === 'site_url'
       ? 'url'
       : rawKey === 'selected_text'
-        ? 'selected text'
+        ? 'referenced text'
         : rawKey.replace(/_/g, ' ');
     let value = line.slice(index + 1).trim();
     if (value.startsWith('"') && value.endsWith('"')) {
@@ -163,6 +191,18 @@ function parseInjectedMessage(content) {
 function avatarLabel(name) {
   const clean = String(name || 'z').replace(/^@/, '').trim();
   return (clean[0] || 'z').toUpperCase();
+}
+
+function Avatar({ name, src }) {
+  const [imageFailed, setImageFailed] = useState(false);
+  const imageSrc = !imageFailed ? normalizeAvatarUrl(src) : '';
+  return (
+    <div className={`zouk-reader-avatar${imageSrc ? ' has-image' : ''}`} aria-hidden="true">
+      {imageSrc ? (
+        <img src={imageSrc} alt="" loading="lazy" decoding="async" onError={() => setImageFailed(true)} />
+      ) : avatarLabel(name)}
+    </div>
+  );
 }
 
 function SendIcon() {
@@ -191,18 +231,20 @@ function MessagesIcon() {
   );
 }
 
-function ContextPreview({ sourceUrl, selectedText }) {
-  const selection = compactText(selectedText, 180);
+function ContextPreview({ sourceUrl, referencedText, includeUrl }) {
+  const reference = compactText(referencedText, 180);
   return (
     <div className="zouk-context-preview" aria-label="Injected context">
-      <div className="zouk-context-preview__row">
-        <span>url</span>
-        <strong>{sourceUrl}</strong>
-      </div>
-      {selection ? (
+      {includeUrl ? (
         <div className="zouk-context-preview__row">
-          <span>selected text</span>
-          <strong>{selection}</strong>
+          <span>url</span>
+          <strong>{sourceUrl}</strong>
+        </div>
+      ) : null}
+      {reference ? (
+        <div className="zouk-context-preview__row">
+          <span>referenced text</span>
+          <strong>{reference}</strong>
         </div>
       ) : null}
     </div>
@@ -243,7 +285,7 @@ export function ZoukInteractiveBlog({ route }) {
   const [composer, setComposer] = useState('');
   const [selectedText, setSelectedText] = useState('');
   const [sourceUrl, setSourceUrl] = useState(currentSourceUrl);
-  const [contextInjected, setContextInjected] = useState(false);
+  const [lastContextUrl, setLastContextUrl] = useState('');
   const [selectionAction, setSelectionAction] = useState(null);
   const [headerSlot, setHeaderSlot] = useState(null);
   const scrollRef = useRef(null);
@@ -254,7 +296,10 @@ export function ZoukInteractiveBlog({ route }) {
   const sheetHeightRef = useRef(0);
   const target = `#${CONFIG.channel}`;
   const panelVisible = open || closing;
-  const shouldInjectContext = !contextInjected;
+  const referencedText = compactText(selectedText);
+  const contextUrlChanged = Boolean(sourceUrl && sourceUrl !== lastContextUrl);
+  const includeContextUrl = contextUrlChanged || Boolean(referencedText);
+  const shouldInjectContext = includeContextUrl || Boolean(referencedText);
 
   const authHeaders = useMemo(() => ({
     'Content-Type': 'application/json',
@@ -332,6 +377,7 @@ export function ZoukInteractiveBlog({ route }) {
           channel: CONFIG.channel,
           name: CONFIG.guestName,
           browserId,
+          picture: currentGuestPictureUrl(),
         }),
       });
       const body = await parseJsonResponse(res);
@@ -455,7 +501,7 @@ export function ZoukInteractiveBlog({ route }) {
         setSelectionAction(null);
         return;
       }
-      if (panelVisible && !contextInjected) setSelectedText(text);
+      if (panelVisible) setSelectedText(text);
       if (!isDesktop) {
         setSelectionAction(null);
         return;
@@ -482,7 +528,7 @@ export function ZoukInteractiveBlog({ route }) {
       document.removeEventListener('selectionchange', schedule);
       document.removeEventListener('touchend', schedule);
     };
-  }, [contextInjected, isDesktop, panelVisible, route?.name, route?.slug]);
+  }, [isDesktop, panelVisible, route?.name, route?.slug]);
 
   useEffect(() => {
     setSelectedText('');
@@ -535,7 +581,16 @@ export function ZoukInteractiveBlog({ route }) {
     const trimmed = composer.trim();
     if (!trimmed || !token || status === 'sending') return;
     const nextSourceUrl = rememberSource();
-    const content = messageWithInjectedContext(trimmed, nextSourceUrl, selectedText, shouldInjectContext);
+    const nextReferencedText = compactText(selectedText);
+    const nextIncludeUrl = Boolean(nextSourceUrl && (nextSourceUrl !== lastContextUrl || nextReferencedText));
+    const nextShouldInject = nextIncludeUrl || Boolean(nextReferencedText);
+    const content = messageWithInjectedContext(
+      trimmed,
+      nextSourceUrl,
+      nextReferencedText,
+      nextIncludeUrl,
+      nextShouldInject,
+    );
     setStatus('sending');
     setError('');
     try {
@@ -546,7 +601,7 @@ export function ZoukInteractiveBlog({ route }) {
       });
       const body = await parseJsonResponse(res);
       setMessages((prev) => mergeMessage(prev, normalizeMessage(body.message)));
-      if (shouldInjectContext) setContextInjected(true);
+      if (nextIncludeUrl) setLastContextUrl(nextSourceUrl);
       setSelectedText('');
       setComposer('');
       setStatus('connected');
@@ -554,7 +609,7 @@ export function ZoukInteractiveBlog({ route }) {
       setStatus('error');
       setError(err instanceof Error ? err.message : 'Send failed');
     }
-  }, [authHeaders, composer, rememberSource, selectedText, shouldInjectContext, status, target, token]);
+  }, [authHeaders, composer, lastContextUrl, rememberSource, selectedText, status, target, token]);
 
   const onSubmit = (event) => {
     event.preventDefault();
@@ -628,7 +683,7 @@ export function ZoukInteractiveBlog({ route }) {
                 <article key={message.id} className={`zouk-reader-message${mine ? ' is-mine' : ''}`}>
                   {!mine ? (
                     <div className="zouk-reader-message-profile">
-                      <div className="zouk-reader-avatar" aria-hidden="true">{avatarLabel(message.senderName)}</div>
+                      <Avatar name={message.senderName} src={message.avatarUrl} />
                       <div className="zouk-reader-bubble-column">
                         <div className="zouk-reader-sender">{message.senderName}</div>
                         <div className="zouk-reader-bubble">
@@ -647,7 +702,9 @@ export function ZoukInteractiveBlog({ route }) {
           </div>
 
           <form className="zouk-reader-composer" onSubmit={onSubmit}>
-            {shouldInjectContext ? <ContextPreview sourceUrl={sourceUrl} selectedText={selectedText} /> : null}
+            {shouldInjectContext ? (
+              <ContextPreview sourceUrl={sourceUrl} referencedText={referencedText} includeUrl={includeContextUrl} />
+            ) : null}
             <div className="zouk-reader-input-shell">
               <textarea
                 ref={textareaRef}
