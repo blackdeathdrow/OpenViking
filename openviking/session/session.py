@@ -1051,7 +1051,7 @@ class Session:
                 self._messages = []
 
             tracker = get_task_tracker()
-            task = tracker.create(
+            task = await tracker.create(
                 "session_commit",
                 resource_id=self.session_id,
                 account_id=self.ctx.account_id,
@@ -1107,7 +1107,7 @@ class Session:
                     await task_store.delete_async(self.ctx, self.session_id, archive_id)
                 except Exception:
                     logger.debug("Failed to delete incomplete archive finalize task")
-                tracker.fail(
+                await tracker.fail(
                     task.task_id,
                     str(e),
                     account_id=self.ctx.account_id,

@@ -72,10 +72,10 @@ def _make_tracked_commit(behavior="instant", result_overrides=None, gate=None, s
         started: asyncio.Event to set when background task starts (for "gated")
     """
 
-    async def mock_commit(_sid, _ctx, keep_recent_count=0):
-        del keep_recent_count
+    async def mock_commit(_sid, _ctx, keep_recent_count=0, **_kwargs):
+        del keep_recent_count, _kwargs
         tracker = get_task_tracker()
-        task = tracker.create(
+        task = await tracker.create(
             "session_commit",
             resource_id=_sid,
             account_id=_ctx.account_id,
@@ -84,7 +84,7 @@ def _make_tracked_commit(behavior="instant", result_overrides=None, gate=None, s
         archive_uri = f"viking://session/test/{_sid}/history/archive_001"
 
         async def _background():
-            tracker.start(task.task_id, account_id=_ctx.account_id, user_id=_ctx.user.user_id)
+            await tracker.start(task.task_id, account_id=_ctx.account_id, user_id=_ctx.user.user_id)
             try:
                 if started:
                     started.set()
@@ -103,14 +103,14 @@ def _make_tracked_commit(behavior="instant", result_overrides=None, gate=None, s
                 }
                 if result_overrides:
                     final_result.update(result_overrides)
-                tracker.complete(
+                await tracker.complete(
                     task.task_id,
                     final_result,
                     account_id=_ctx.account_id,
                     user_id=_ctx.user.user_id,
                 )
             except Exception as e:
-                tracker.fail(
+                await tracker.fail(
                     task.task_id,
                     str(e),
                     account_id=_ctx.account_id,
@@ -360,18 +360,18 @@ async def test_add_resource_async_returns_task_id(api_client):
     async def fake_add_resource(**kwargs):
         tracker = get_task_tracker()
         root_uri = "viking://resources/async-test"
-        task = tracker.create(
+        task = await tracker.create(
             "add_resource",
             resource_id=root_uri,
             account_id=kwargs["ctx"].account_id,
             user_id=kwargs["ctx"].user.user_id,
         )
-        tracker.start(
+        await tracker.start(
             task.task_id,
             account_id=kwargs["ctx"].account_id,
             user_id=kwargs["ctx"].user.user_id,
         )
-        tracker.complete(
+        await tracker.complete(
             task.task_id,
             {"root_uri": root_uri},
             account_id=kwargs["ctx"].account_id,
@@ -422,7 +422,7 @@ async def test_add_resource_async_task_lifecycle(api_client):
     async def fake_add_resource(**kwargs):
         tracker = get_task_tracker()
         root_uri = "viking://resources/test-resource"
-        task = tracker.create(
+        task = await tracker.create(
             "add_resource",
             resource_id=root_uri,
             account_id=kwargs["ctx"].account_id,
@@ -430,13 +430,13 @@ async def test_add_resource_async_task_lifecycle(api_client):
         )
 
         async def _background():
-            tracker.start(
+            await tracker.start(
                 task.task_id,
                 account_id=kwargs["ctx"].account_id,
                 user_id=kwargs["ctx"].user.user_id,
             )
             await asyncio.sleep(0.05)
-            tracker.complete(
+            await tracker.complete(
                 task.task_id,
                 {"root_uri": root_uri},
                 account_id=kwargs["ctx"].account_id,
@@ -476,18 +476,18 @@ async def test_add_resource_task_list_filter(api_client):
     async def fake_add_resource(**kwargs):
         tracker = get_task_tracker()
         root_uri = "viking://resources/filter-test"
-        task = tracker.create(
+        task = await tracker.create(
             "add_resource",
             resource_id=root_uri,
             account_id=kwargs["ctx"].account_id,
             user_id=kwargs["ctx"].user.user_id,
         )
-        tracker.start(
+        await tracker.start(
             task.task_id,
             account_id=kwargs["ctx"].account_id,
             user_id=kwargs["ctx"].user.user_id,
         )
-        tracker.complete(
+        await tracker.complete(
             task.task_id,
             {"root_uri": root_uri},
             account_id=kwargs["ctx"].account_id,
@@ -521,17 +521,17 @@ async def test_add_skill_async_returns_task_id(api_client):
 
     async def fake_add_skill(**kwargs):
         tracker = get_task_tracker()
-        task = tracker.create(
+        task = await tracker.create(
             "add_skill",
             account_id=kwargs["ctx"].account_id,
             user_id=kwargs["ctx"].user.user_id,
         )
-        tracker.start(
+        await tracker.start(
             task.task_id,
             account_id=kwargs["ctx"].account_id,
             user_id=kwargs["ctx"].user.user_id,
         )
-        tracker.complete(
+        await tracker.complete(
             task.task_id,
             {},
             account_id=kwargs["ctx"].account_id,

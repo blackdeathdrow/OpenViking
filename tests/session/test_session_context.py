@@ -26,7 +26,7 @@ async def _wait_for_task(task_id: str, timeout: float = 30.0) -> dict:
     tracker = get_task_tracker()
     for _ in range(int(timeout / 0.1)):
         await _drain_archive_finalize_once()
-        task = tracker.get(task_id)
+        task = await tracker.get(task_id)
         if task and task.status.value in ("completed", "failed"):
             return task.to_dict()
         await asyncio.sleep(0.1)
@@ -41,7 +41,12 @@ async def _drain_archive_finalize_once() -> bool:
     store = service._archive_task_store
     if store is None:
         return False
-    task = await store.claim_next_async("test-session-archive-finalizer")
+    task = None
+    for _ in range(10):
+        task = await store.claim_next_async("test-session-archive-finalizer")
+        if task is not None:
+            break
+        await asyncio.sleep(0.01)
     if task is None:
         return False
     await service._process_archive_finalize_task(store, task)

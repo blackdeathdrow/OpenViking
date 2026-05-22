@@ -85,7 +85,11 @@ class SessionArchiveFinalizer:
         usage_records = _usage_records_from_payload(usage_records_payload)
         extraction_messages = await session._hydrate_tool_outputs_for_extraction(messages)
 
-        tracker.start(task_id, account_id=session.ctx.account_id, user_id=session.ctx.user.user_id)
+        await tracker.start(
+            task_id,
+            account_id=session.ctx.account_id,
+            user_id=session.ctx.user.user_id,
+        )
         latest_archive_overview = await session._get_latest_completed_archive_overview(
             exclude_archive_uri=archive_uri
         )
@@ -118,7 +122,7 @@ class SessionArchiveFinalizer:
                 },
             },
         }
-        tracker.complete(
+        await tracker.complete(
             task_id,
             result,
             account_id=session.ctx.account_id,

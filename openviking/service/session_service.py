@@ -152,7 +152,7 @@ class SessionService:
             messages_uri = f"{task.archive_uri}/messages.jsonl"
             if not await self._viking_fs.exists(messages_uri, ctx=ctx):
                 await store.delete_async(ctx, task.session_id, task.archive_id)
-                get_task_tracker().fail(
+                await get_task_tracker().fail(
                     task.task_tracker_id,
                     "archive_prepare_abandoned: messages.jsonl missing",
                     account_id=task.account_id,
@@ -179,7 +179,7 @@ class SessionService:
             )
             if state == STATE_TERMINAL_FAILED:
                 tracker = get_task_tracker()
-                tracker.fail(
+                await tracker.fail(
                     task.task_tracker_id,
                     error,
                     account_id=task.account_id,
@@ -406,7 +406,7 @@ class SessionService:
 
     async def get_commit_task(self, task_id: str, ctx: RequestContext) -> Optional[Dict[str, Any]]:
         """Query background commit task status by task_id for the calling owner."""
-        task = get_task_tracker().get(
+        task = await get_task_tracker().get(
             task_id,
             account_id=ctx.account_id,
             user_id=ctx.user.user_id,
@@ -434,7 +434,7 @@ class SessionService:
                 await self._viking_fs.read_file(f"{archive_uri}/messages.jsonl", ctx=ctx)
             except Exception as exc:
                 raise NotFoundError(archive_id, "session archive") from exc
-            tracker_task = get_task_tracker().create(
+            tracker_task = await get_task_tracker().create(
                 "session_commit",
                 resource_id=session_id,
                 account_id=ctx.account_id,
@@ -459,7 +459,7 @@ class SessionService:
                 f"Archive {archive_id} is not terminal failed (state={task.state})"
             )
         else:
-            tracker_task = get_task_tracker().create(
+            tracker_task = await get_task_tracker().create(
                 "session_commit",
                 resource_id=session_id,
                 account_id=ctx.account_id,
