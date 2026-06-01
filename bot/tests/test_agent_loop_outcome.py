@@ -19,18 +19,6 @@ class _FakeProvider(LLMProvider):
         return "fake-model"
 
 
-class _ClassifierProvider(_FakeProvider):
-    def __init__(self, classifier_response: str):
-        self.classifier_response = classifier_response
-        self.calls = []
-
-    async def chat(self, *args, **kwargs):
-        from vikingbot.providers.base import LLMResponse
-
-        self.calls.append({"args": args, "kwargs": kwargs})
-        return LLMResponse(content=self.classifier_response)
-
-
 class _FakeSubagentManager:
     def __init__(self, **kwargs):
         self.kwargs = kwargs
@@ -223,7 +211,7 @@ async def test_agent_loop_does_not_record_feedback_for_plain_follow_up_question(
 
 
 @pytest.mark.asyncio
-async def test_agent_loop_uses_llm_fallback_for_ambiguous_positive_feedback(
+async def test_agent_loop_does_not_record_ambiguous_feedback_without_rule_match(
     temp_dir: Path, monkeypatch
 ):
     monkeypatch.setattr(AgentLoop, "_register_builtin_hooks", lambda self: None)
@@ -236,14 +224,11 @@ async def test_agent_loop_uses_llm_fallback_for_ambiguous_positive_feedback(
         staticmethod(lambda: fake_langfuse),
     )
 
-    provider = _ClassifierProvider(
-        '{"is_feedback": true, "sentiment": "positive", "confidence": 0.93}'
-    )
     bus = MessageBus()
     config = Config(storage_workspace=str(temp_dir))
     loop = AgentLoop(
         bus=bus,
-        provider=provider,
+        provider=_FakeProvider(),
         workspace=temp_dir / "workspace",
         config=config,
     )
@@ -270,18 +255,17 @@ async def test_agent_loop_uses_llm_fallback_for_ambiguous_positive_feedback(
     )
 
     assert response is not None
-    assert bus.outbound_size == 2
-    assert len(provider.calls) == 1
+    assert bus.outbound_size == 1
 
-    feedback_event = await bus.consume_outbound()
     outcome_event = await bus.consume_outbound()
-    assert feedback_event.metadata["feedback_submitted"]["feedback_type"] == "thumb_up"
-    assert feedback_event.metadata["feedback_submitted"]["feedback_reason"] == "natural_language_llm"
     assert outcome_event.metadata["response_outcome_evaluated"]["outcome_label"] == "positive_feedback"
+
+    persisted_session = loop.sessions.get_or_create(session_key, skip_heartbeat=True)
+    assert persisted_session.metadata.get("feedback_events") in (None, [])
 
 
 @pytest.mark.asyncio
-async def test_agent_loop_skips_llm_feedback_when_confidence_too_low(
+async def test_agent_loop_treats_ambiguous_negative_reply_as_reask_without_feedback(
     temp_dir: Path, monkeypatch
 ):
     monkeypatch.setattr(AgentLoop, "_register_builtin_hooks", lambda self: None)
@@ -294,14 +278,11 @@ async def test_agent_loop_skips_llm_feedback_when_confidence_too_low(
         staticmethod(lambda: fake_langfuse),
     )
 
-    provider = _ClassifierProvider(
-        '{"is_feedback": true, "sentiment": "negative", "confidence": 0.41}'
-    )
     bus = MessageBus()
     config = Config(storage_workspace=str(temp_dir))
     loop = AgentLoop(
         bus=bus,
-        provider=provider,
+        provider=_FakeProvider(),
         workspace=temp_dir / "workspace",
         config=config,
     )
@@ -329,7 +310,6 @@ async def test_agent_loop_skips_llm_feedback_when_confidence_too_low(
 
     assert response is not None
     assert bus.outbound_size == 1
-    assert len(provider.calls) == 1
 
     outcome_event = await bus.consume_outbound()
     assert outcome_event.metadata["response_outcome_evaluated"]["outcome_label"] == "reasked"

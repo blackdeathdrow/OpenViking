@@ -31,7 +31,6 @@ from vikingbot.observability.outcome import (
     DetectedFeedback,
     detect_feedback_from_message,
     evaluate_response_outcome,
-    normalize_llm_feedback_decision,
     should_update_outcome,
 )
 from vikingbot.providers.base import LLMProvider
@@ -56,8 +55,6 @@ class AgentLoop:
     4. Executes tool calls
     5. Sends responses back
     """
-
-    FEEDBACK_CLASSIFIER_CONFIDENCE_THRESHOLD = 0.8
 
     def __init__(
         self,
@@ -881,96 +878,8 @@ class AgentLoop:
         assistant_message: dict[str, Any],
         user_message: InboundMessage,
     ) -> DetectedFeedback | None:
-        """Detect explicit natural-language feedback with rules first, then LLM fallback."""
-        rule_feedback = detect_feedback_from_message(user_message.content)
-        if rule_feedback is not None:
-            return rule_feedback
-
-        return await self._detect_feedback_with_llm(
-            assistant_content=str(assistant_message.get("content") or ""),
-            user_content=user_message.content,
-            session_key=user_message.session_key,
-        )
-
-    async def _detect_feedback_with_llm(
-        self,
-        *,
-        assistant_content: str,
-        user_content: str,
-        session_key: SessionKey,
-    ) -> DetectedFeedback | None:
-        """Ask the model whether the user's reply is feedback on the previous response."""
-        if not assistant_content.strip() or not user_content.strip():
-            return None
-
-        prompt = f"""Decide whether the user's latest message is feedback about the assistant's immediately previous reply.
-
-Return ONLY valid JSON with exactly these keys:
-- is_feedback: boolean
-- sentiment: one of \"positive\", \"negative\", \"none\"
-- confidence: number from 0 to 1
-
-Rules:
-- Mark is_feedback=true only when the user is evaluating the previous reply.
-- If the user is mainly asking a new question, asking for clarification, or continuing the task, use is_feedback=false and sentiment=\"none\".
-- Use sentiment=\"positive\" for praise, thanks that clearly indicate the previous reply helped, or explicit satisfaction.
-- Use sentiment=\"negative\" for dissatisfaction, statements that the reply was unhelpful/wrong, or explicit criticism.
-- Be conservative. If uncertain, return is_feedback=false.
-
-Assistant reply:
-{assistant_content}
-
-User message:
-{user_content}
-"""
-        try:
-            response = await self.provider.chat(
-                messages=[
-                    {
-                        "role": "system",
-                        "content": "You classify whether a user message is feedback. Respond only with valid JSON.",
-                    },
-                    {"role": "user", "content": prompt},
-                ],
-                model=self.model,
-                max_tokens=120,
-                temperature=0,
-                session_id=f"{session_key.safe_name()}::feedback_classifier",
-            )
-        except Exception as exc:
-            logger.warning(f"LLM feedback classification failed: {exc}")
-            return None
-
-        text = (response.content or "").strip()
-        if text.startswith("```"):
-            text = text.split("\n", 1)[-1].rsplit("```", 1)[0].strip()
-
-        try:
-            payload = json.loads(text)
-        except json.JSONDecodeError:
-            logger.warning("LLM feedback classification returned non-JSON content")
-            return None
-
-        decision = normalize_llm_feedback_decision(payload)
-        if decision is None:
-            return None
-        if not decision.is_feedback or decision.confidence < self.FEEDBACK_CLASSIFIER_CONFIDENCE_THRESHOLD:
-            return None
-        if decision.sentiment == "positive":
-            return DetectedFeedback(
-                feedback_type="thumb_up",
-                feedback_text=user_content,
-                feedback_reason="natural_language_llm",
-                feedback_score=1.0,
-            )
-        if decision.sentiment == "negative":
-            return DetectedFeedback(
-                feedback_type="thumb_down",
-                feedback_text=user_content,
-                feedback_reason="natural_language_llm",
-                feedback_score=-1.0,
-            )
-        return None
+        """Detect explicit natural-language feedback with rule-based matching only."""
+        return detect_feedback_from_message(user_message.content)
 
     def _get_channel_config(self, session_key: SessionKey):
         """Get channel config for a session key.

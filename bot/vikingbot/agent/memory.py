@@ -59,7 +59,6 @@ class MemoryStore:
         user_memories = []
         total_chars = 0
         seen_content_hashes = set()
-
         for idx, memory in enumerate(filtered_memories, start=1):
             uri = get_uri(memory)
             abstract = get_abstract(memory)
@@ -117,7 +116,6 @@ class MemoryStore:
                 )
                 user_memories.append(memory_str)
                 # Don't count link-only towards max_chars
-
         return "\n".join(user_memories)
 
     def write_long_term(self, content: str) -> None:
@@ -158,21 +156,6 @@ class MemoryStore:
             if not result:
                 return ""
 
-            # Log raw search results for debugging
-            memory_list = []
-            memory_list.append(f"user_memory[{len(result['user_memory'])}]:")
-
-            for i, mem in enumerate(result["user_memory"]):
-                uri = mem.get("uri", "") if isinstance(mem, dict) else getattr(mem, "uri", "")
-                score = mem.get("score", 0) if isinstance(mem, dict) else getattr(mem, "score", 0)
-                memory_list.append(f"{i},{uri},{score}")
-            memory_list.append(f"agent_memory[{len(result['agent_memory'])}]:")
-            for i, mem in enumerate(result["agent_memory"]):
-                uri = mem.get("uri", "") if isinstance(mem, dict) else getattr(mem, "uri", "")
-                score = mem.get("score", 0) if isinstance(mem, dict) else getattr(mem, "score", 0)
-                memory_list.append(f"{i},{uri},{score}")
-            raw_memories_log = "\n".join(memory_list)
-            logger.info(f"[RAW_MEMORIES]\n{raw_memories_log}")
             user_memory = await self._parse_viking_memory(
                 result["user_memory"], client, min_score=0.1, max_chars=4000
             )
