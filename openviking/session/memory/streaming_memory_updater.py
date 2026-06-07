@@ -121,6 +121,7 @@ class StreamingMemoryUpdater:
                 timer_check_interval_seconds=self.config.timer_check_interval_seconds,
             ),
             item_size=lambda request: _operation_count(request.operations),
+            result_metadata=lambda result: result.metadata,
         )
         self._last_result = None
         self._closed = False
@@ -158,6 +159,19 @@ class StreamingMemoryUpdater:
             raise ValueError("MemoryUpdateRequest.ctx is required")
         result = await self._batcher.submit(request)
         self._last_result = result
+        tracer.info(
+            "StreamingMemoryUpdater submit finished "
+            f"batch_id={result.metadata.get('batch_id')} "
+            f"batch_trace_id={result.metadata.get('batch_trace_id')} "
+            f"flush_reason={result.metadata.get('flush_reason')} "
+            f"request_count={result.request_count} "
+            f"operation_count={result.metadata.get('operation_count')} "
+            f"written_uris={result.apply_result.written_uris} "
+            f"edited_uris={result.apply_result.edited_uris} "
+            f"deleted_uris={result.apply_result.deleted_uris} "
+            f"errors={result.apply_result.errors}",
+            console=self.config.trace_console,
+        )
         return result
 
     async def _process_batch(

@@ -7,10 +7,12 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import time
+import uuid
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
-from typing import Generic, TypeVar
+from typing import Any, Generic, TypeVar
 
+from openviking.telemetry import tracer
 from openviking_cli.utils import get_logger
 
 logger = get_logger(__name__)
@@ -51,6 +53,7 @@ class StreamingBatcher(Generic[T, R]):
     process_batch: Callable[[list[T], str], Awaitable[R]]
     config: StreamingBatcherConfig = field(default_factory=StreamingBatcherConfig)
     item_size: Callable[[T], int] | None = None
+    result_metadata: Callable[[R], dict[str, Any] | None] | None = None
     _buffer: list[_PendingBatchItem[T, R]] = field(init=False, repr=False)
     _buffer_lock: asyncio.Lock = field(init=False, repr=False)
     _flush_lock: asyncio.Lock = field(init=False, repr=False)
@@ -120,8 +123,22 @@ class StreamingBatcher(Generic[T, R]):
                 items = self._buffer
                 self._buffer = []
 
+            batch_id = uuid.uuid4().hex
+            batch_trace_id = uuid.uuid4().hex
             try:
-                result = await self.process_batch([item.payload for item in items], reason)
+                with tracer.start_as_current_span(
+                    name=f"{self.name}.flush",
+                    trace_id=batch_trace_id,
+                ):
+                    tracer.set("batch_id", batch_id)
+                    tracer.set("flush_reason", reason)
+                    tracer.set("request_count", len(items))
+                    tracer.set("input_size", sum(self._item_size(item.payload) for item in items))
+                    result = await self.process_batch([item.payload for item in items], reason)
+                    metadata = self._get_result_metadata(result)
+                    if metadata is not None:
+                        metadata.setdefault("batch_id", batch_id)
+                        metadata.setdefault("batch_trace_id", batch_trace_id)
             except Exception as exc:
                 for item in items:
                     if not item.future.done():
@@ -202,6 +219,12 @@ class StreamingBatcher(Generic[T, R]):
         if self.item_size is None:
             return 1
         return max(0, int(self.item_size(payload)))
+
+    def _get_result_metadata(self, result: R) -> dict[str, Any] | None:
+        if self.result_metadata is not None:
+            return self.result_metadata(result)
+        metadata = getattr(result, "metadata", None)
+        return metadata if isinstance(metadata, dict) else None
 
 
 @dataclass(slots=True)

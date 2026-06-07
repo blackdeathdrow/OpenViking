@@ -156,6 +156,7 @@ class StreamingPolicyTrainer:
                 timer_check_interval_seconds=self.config.timer_check_interval_seconds,
             ),
             item_size=lambda item: len(item.gradients),
+            result_metadata=lambda result: result.metadata,
         )
         self._last_apply_result: ApplyResult | None = None
         self._closed = False
@@ -218,6 +219,17 @@ class StreamingPolicyTrainer:
             )
         )
         self._last_apply_result = result.apply_result
+        tracer.info(
+            "StreamingPolicyTrainer submit finished "
+            f"batch_id={result.metadata.get('batch_id')} "
+            f"batch_trace_id={result.metadata.get('batch_trace_id')} "
+            f"flush_reason={result.metadata.get('flush_reason')} "
+            f"rollout_count={result.metadata.get('rollout_count')} "
+            f"gradient_count={result.metadata.get('gradient_count')} "
+            f"written_uris={result.apply_result.written_uris} "
+            f"errors={result.apply_result.errors}",
+            console=self.config.trace_console,
+        )
         return result
 
     async def _process_batch(
