@@ -309,6 +309,17 @@ class MemoryUpdateResult:
         )
 
 
+def _same_batch_delete_conflict_key(uri: str) -> str:
+    """Return a conservative key for detecting same-batch upsert/delete URI conflicts.
+
+    Some local filesystems are case-insensitive.  Treat case-only URI variants as
+    conflicting inside one apply batch so a loser delete cannot remove a winner
+    upsert before vectorization.
+    """
+
+    return str(uri or "").rstrip("/").casefold()
+
+
 class MemoryUpdater:
     """
     Applies MemoryOperations to storage.
@@ -406,19 +417,27 @@ class MemoryUpdater:
         # LLM issues a Replace with the same experience_name (delete old + create same-name new),
         # which is semantically an Update. Executing the delete would remove the just-written file.
         upserted_uris = set(result.written_uris + result.edited_uris)
+        upserted_uri_keys = {_same_batch_delete_conflict_key(uri) for uri in upserted_uris}
         for file_content in operations.delete_file_contents:
-            if file_content.uri in upserted_uris:
+            delete_uri = file_content.uri
+            if delete_uri in upserted_uris:
                 tracer.info(
-                    f"[apply_operations] skipping delete for {file_content.uri}: "
+                    f"[apply_operations] skipping delete for {delete_uri}: "
                     "URI was upserted in the same batch (Replace-with-same-name treated as Update)"
                 )
                 continue
+            if _same_batch_delete_conflict_key(delete_uri) in upserted_uri_keys:
+                tracer.info(
+                    f"[apply_operations] skipping delete for {delete_uri}: "
+                    "URI case-conflicts with an upserted URI in the same batch"
+                )
+                continue
             try:
-                await self._apply_delete(file_content.uri, ctx)
-                result.add_deleted(file_content.uri)
+                await self._apply_delete(delete_uri, ctx)
+                result.add_deleted(delete_uri)
             except Exception as e:
-                tracer.error(f"Failed to delete memory {file_content.uri}", e)
-                result.add_error(file_content.uri, e)
+                tracer.error(f"Failed to delete memory {delete_uri}", e)
+                result.add_error(delete_uri, e)
 
         # Vectorize written and edited memories
         uri_memory_type_map = {}
@@ -657,8 +676,9 @@ class MemoryUpdater:
         # Also skip URIs that were deleted in the same batch
         uris_to_vectorize = []
         deleted_set = set(result.deleted_uris)
+        deleted_keys = {_same_batch_delete_conflict_key(uri) for uri in deleted_set}
         for uri in result.written_uris + result.edited_uris:
-            if uri in deleted_set:
+            if uri in deleted_set or _same_batch_delete_conflict_key(uri) in deleted_keys:
                 continue
             if not uri.endswith("/.overview.md") and not uri.endswith("/.abstract.md"):
                 uris_to_vectorize.append(uri)
