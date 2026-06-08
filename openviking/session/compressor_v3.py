@@ -14,7 +14,7 @@ from __future__ import annotations
 
 import json
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Any, List, Optional
 from uuid import uuid4
 
@@ -260,7 +260,7 @@ class SessionCompressorV3:
         allow_self_memory: bool = True,
         allowed_peer_ids: Optional[set[str]] = None,
     ) -> "_V3ExtractionResult":
-        del user, session_id
+        del user
         if not messages:
             return _V3ExtractionResult()
         if not ctx:
@@ -299,6 +299,8 @@ class SessionCompressorV3:
             tracer.info("[v3_patch_merge] No memory operations generated")
             return _V3ExtractionResult()
 
+        extraction_id = uuid4().hex
+        extracted_at = datetime.now(timezone.utc).isoformat()
         extracted_cases = _operations_to_cases(operations)
 
         updater = await get_streaming_memory_updater(
@@ -317,6 +319,12 @@ class SessionCompressorV3:
                     "allowed_memory_types": allowed_memory_types,
                     "allow_self": allow_self_memory,
                     "allowed_peer_ids": allowed_peer_ids,
+                },
+                metadata={
+                    "source_extraction_id": extraction_id,
+                    "session_id": session_id,
+                    "archive_uri": archive_uri,
+                    "extracted_at": extracted_at,
                 },
             )
         )

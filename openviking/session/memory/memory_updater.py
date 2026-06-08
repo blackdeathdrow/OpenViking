@@ -488,6 +488,10 @@ class MemoryUpdater:
                 old_content = resolved_op.old_memory_file_content
 
             metadata: Dict[str, Any] = dict(resolved_op.memory_fields)
+            source = getattr(resolved_op, "source", None)
+            source_extraction_id = getattr(source, "extraction_id", None) if source else None
+            if source_extraction_id:
+                metadata["source_extraction_id"] = str(source_extraction_id)
             # Process fields defined in schema (apply merge_op)
             for field in schema.fields:
                 if field.name in resolved_op.memory_fields:

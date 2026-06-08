@@ -23,6 +23,8 @@ from openviking.session.memory.streaming_memory_updater import (
     MemoryUpdateRequest,
     StreamingMemoryUpdater,
     StreamingMemoryUpdaterConfig,
+    classify_memory_merge_mode,
+    merge_one_memory_type_operations,
 )
 from openviking_cli.session.user_id import UserIdentifier
 
@@ -51,6 +53,11 @@ class InMemoryVikingFS:
         uri = _canonical_user_uri(uri, ctx)
         self.files[uri] = content
         self.writes.append((uri, content, ctx))
+
+    async def rm(self, uri: str, recursive: bool = False, ctx=None, lock_handle=None):
+        del recursive, lock_handle
+        uri = _canonical_user_uri(uri, ctx)
+        self.files.pop(uri, None)
 
 
 def _canonical_user_uri(uri: str, ctx=None) -> str:
@@ -145,6 +152,12 @@ def _note_op(name: str) -> ResolvedOperation:
             "content": f"{name} content",
         },
     )
+
+
+def _note_op_with_source(name: str, extraction_id: str) -> ResolvedOperation:
+    op = _note_op(name)
+    op.memory_fields["source_extraction_id"] = extraction_id
+    return op
 
 
 @pytest.mark.asyncio
@@ -311,3 +324,134 @@ async def test_streaming_memory_updater_batches_non_append_only_submits(monkeypa
     assert result1.request_count == 2
     assert result1.metadata["flush_reason"] == "count"
     assert sorted(result1.apply_result.written_uris) == sorted([op1.uris[0], op2.uris[0]])
+
+
+def test_classify_memory_merge_mode_forces_cross_extraction_merge():
+    op1 = _note_op_with_source("note_a", "extract_a")
+    op2 = _note_op_with_source("note_b", "extract_b")
+
+    fast_path, reason = classify_memory_merge_mode([op1, op2], schema=_registry().get("notes"))
+
+    assert fast_path is False
+    assert reason == "cross_extraction_batch"
+
+
+@pytest.mark.asyncio
+async def test_streaming_memory_updater_persists_source_extraction_id_and_hides_from_read(
+    monkeypatch,
+):
+    fs = InMemoryVikingFS({})
+    fs.search = AsyncMock(return_value=[])
+    monkeypatch.setattr(
+        "openviking.session.memory.streaming_memory_updater.get_viking_fs",
+        lambda: fs,
+    )
+    monkeypatch.setattr(
+        "openviking.session.memory.memory_updater.get_viking_fs",
+        lambda: fs,
+    )
+
+    updater = StreamingMemoryUpdater(
+        registry=_registry(),
+        config=StreamingMemoryUpdaterConfig(
+            max_operations_per_update=8,
+            max_wait_seconds=0.01,
+            timer_check_interval_seconds=0.01,
+        ),
+    )
+    op = _note_op("note_source")
+    result = await updater.submit(
+        MemoryUpdateRequest(
+            operations=ResolvedOperations(
+                upsert_operations=[op],
+                delete_file_contents=[],
+                errors=[],
+            ),
+            messages=[Message(id="m1", role="user", parts=[TextPart("note source")])],
+            ctx=_ctx(),
+            metadata={"source_extraction_id": "extract_1"},
+        )
+    )
+
+    assert result.apply_result.written_uris == [op.uris[0]]
+    assert '"source_extraction_id": "extract_1"' in fs.files[op.uris[0]]
+
+    from openviking.server.identity import ToolContext
+    from openviking.session.memory.tools import MemoryReadTool
+
+    read_result = await MemoryReadTool().execute(
+        ToolContext(viking_fs=fs, request_ctx=_ctx(), read_file_contents={}),
+        uri=op.uris[0],
+    )
+
+    assert "source_extraction_id" not in read_result
+
+
+@pytest.mark.asyncio
+async def test_cross_extraction_merge_deletes_existing_loser_uri(monkeypatch):
+    existing_uri = "viking://user/u/memories/notes/existing.md"
+    winner_uri = "viking://user/u/memories/notes/winner.md"
+    old_file = __import__(
+        "openviking.session.memory.dataclass", fromlist=["MemoryFile"]
+    ).MemoryFile(
+        uri=existing_uri,
+        content="old",
+        memory_type="notes",
+        extra_fields={"note_name": "existing"},
+    )
+    existing_op = ResolvedOperation(
+        old_memory_file_content=old_file,
+        memory_type="notes",
+        uris=[existing_uri],
+        memory_fields={
+            "note_name": "existing",
+            "content": {"blocks": [{"search": "old", "replace": "old updated"}]},
+            "source_extraction_id": "extract_a",
+        },
+    )
+    new_op = ResolvedOperation(
+        old_memory_file_content=None,
+        memory_type="notes",
+        uris=[winner_uri],
+        memory_fields={
+            "note_name": "winner",
+            "content": "merged content",
+            "source_extraction_id": "extract_b",
+        },
+    )
+
+    async def fake_run(self):
+        return (
+            ResolvedOperations(
+                upsert_operations=[new_op],
+                delete_file_contents=[],
+                errors=[],
+            ),
+            [],
+        )
+
+    monkeypatch.setattr(
+        "openviking.session.memory.streaming_memory_updater.ExtractLoop.run",
+        fake_run,
+    )
+    fs = InMemoryVikingFS({existing_uri: "old"})
+    fs.search = AsyncMock(return_value=[])
+    monkeypatch.setattr(
+        "openviking.session.memory.streaming_memory_updater.get_viking_fs",
+        lambda: fs,
+    )
+    monkeypatch.setattr(
+        "openviking.session.memory.memory_updater.get_viking_fs",
+        lambda: fs,
+    )
+
+    merged = await merge_one_memory_type_operations(
+        memory_type="notes",
+        operations=[existing_op, new_op],
+        messages=[],
+        ctx=_ctx(),
+        registry=_registry(),
+    )
+
+    assert [op.uris for op in merged.upsert_operations] == [[winner_uri]]
+    assert [file.uri for file in merged.delete_file_contents] == [existing_uri]

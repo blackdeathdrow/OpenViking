@@ -19,6 +19,7 @@ from openviking.message import Message
 from openviking.server.identity import RequestContext
 from openviking.session.memory.dataclass import (
     MemoryFile,
+    MemoryOperationSource,
     MemoryTypeSchema,
     ResolvedOperation,
     ResolvedOperations,
@@ -163,6 +164,7 @@ class StreamingMemoryUpdater:
             raise RuntimeError("StreamingMemoryUpdater is closed")
         if request.ctx is None:
             raise ValueError("MemoryUpdateRequest.ctx is required")
+        attach_source_to_request_operations(request)
         append_only_request, merge_request = self._split_append_only_request(request)
         append_result = (
             await self._apply_append_only_request_now(append_only_request)
@@ -456,7 +458,7 @@ async def merge_memory_operations(
         logger.warning(
             "[streaming_memory_updater] merge failed for %s: %s", memory_type, merge_result
         )
-        if strict_extract_errors:
+        if strict_extract_errors or is_cross_extraction_group(memory_ops):
             raise merge_result
         merged_upserts.extend(memory_ops)
 
@@ -613,6 +615,34 @@ async def merge_one_memory_type_operations(
     )
     merged, _ = await orchestrator.run()
     merged = merged or ResolvedOperations(upsert_operations=[], delete_file_contents=[], errors=[])
+    existing_input_uris = {
+        uri
+        for op in operations
+        if getattr(op, "old_memory_file_content", None) is not None
+        for uri in (op.uris or [])
+        if uri
+    }
+    output_upsert_uris = {
+        uri for op in (merged.upsert_operations or []) for uri in (op.uris or []) if uri
+    }
+    missing_delete_uris = sorted(existing_input_uris - output_upsert_uris)
+    if missing_delete_uris:
+        existing_by_uri = {
+            uri: getattr(op, "old_memory_file_content", None)
+            for op in operations
+            for uri in (op.uris or [])
+            if getattr(op, "old_memory_file_content", None) is not None
+        }
+        existing_delete_uris = {
+            file.uri for file in (merged.delete_file_contents or []) if getattr(file, "uri", None)
+        }
+        for uri in missing_delete_uris:
+            if uri in existing_delete_uris:
+                continue
+            old_file = existing_by_uri.get(uri)
+            if old_file is not None:
+                merged.delete_file_contents.append(old_file)
+                existing_delete_uris.add(uri)
     tracer.info(
         "[streaming_memory_updater] llm merge output "
         f"memory_type={memory_type} upserts={len(merged.upsert_operations)} "
@@ -631,6 +661,7 @@ def clone_operation_for_uri(op: ResolvedOperation, uri: str) -> ResolvedOperatio
             "uris": [uri],
             "memory_fields": dict(getattr(op, "memory_fields", {}) or {}),
             "old_memory_file_content": old_file,
+            "source": getattr(op, "source", None),
         },
         deep=True,
     )
@@ -680,6 +711,9 @@ def render_operation_after_file_content(
 ) -> str:
     old_content = getattr(op, "old_memory_file_content", None)
     metadata: dict[str, Any] = dict(getattr(op, "memory_fields", {}) or {})
+    source_extraction_id = source_extraction_id_for_operation(op)
+    if source_extraction_id:
+        metadata["source_extraction_id"] = source_extraction_id
     for field_def in schema.fields:
         if field_def.name not in metadata:
             continue
@@ -744,6 +778,8 @@ def classify_memory_merge_mode(
 
     if operation_mode == "add_only":
         return True, "add_only"
+    if is_cross_extraction_group(operations):
+        return False, "cross_extraction_batch"
     if all_new_files and duplicate_target_count == 0:
         return True, "unique_new_files"
     if len(operations) != 1:
@@ -771,6 +807,61 @@ def can_fast_path_memory_operations(
 
 def _unique_operation_uris(operations: list[ResolvedOperation]) -> list[str]:
     return list(dict.fromkeys(uri for op in operations for uri in (op.uris or []) if uri))
+
+
+def attach_source_to_request_operations(request: MemoryUpdateRequest) -> None:
+    source = memory_operation_source_from_request(request)
+    if source is None:
+        return
+    for op in list(getattr(request.operations, "upsert_operations", []) or []):
+        if getattr(op, "source", None) is None:
+            op.source = source
+        source_extraction_id = getattr(op.source, "extraction_id", None)
+        if source_extraction_id:
+            op.memory_fields.setdefault("source_extraction_id", source_extraction_id)
+
+
+def memory_operation_source_from_request(
+    request: MemoryUpdateRequest,
+) -> MemoryOperationSource | None:
+    metadata = dict(getattr(request, "metadata", {}) or {})
+    extraction_id = metadata.get("source_extraction_id") or metadata.get("extraction_id")
+    if not extraction_id:
+        return None
+    return MemoryOperationSource(
+        extraction_id=str(extraction_id),
+        session_id=_optional_str(metadata.get("session_id")),
+        archive_uri=_optional_str(metadata.get("archive_uri")),
+        task_id=_optional_str(metadata.get("task_id")),
+        trace_id=_optional_str(metadata.get("trace_id")),
+        extracted_at=_optional_str(metadata.get("extracted_at")),
+    )
+
+
+def source_extraction_id_for_operation(op: ResolvedOperation) -> str | None:
+    source = getattr(op, "source", None)
+    extraction_id = getattr(source, "extraction_id", None) if source is not None else None
+    if extraction_id:
+        return str(extraction_id)
+    fields = dict(getattr(op, "memory_fields", {}) or {})
+    field_value = fields.get("source_extraction_id")
+    return str(field_value) if field_value else None
+
+
+def is_cross_extraction_group(operations: list[ResolvedOperation]) -> bool:
+    extraction_ids = {
+        extraction_id
+        for extraction_id in (source_extraction_id_for_operation(op) for op in operations)
+        if extraction_id
+    }
+    return len(extraction_ids) > 1
+
+
+def _optional_str(value: Any) -> str | None:
+    if value is None:
+        return None
+    text = str(value)
+    return text if text else None
 
 
 def seed_patch_merge_read_contents(

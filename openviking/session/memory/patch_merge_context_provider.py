@@ -14,6 +14,8 @@ from openviking.session.memory.session_extract_context_provider import (
     SessionExtractContextProvider,
 )
 
+_SYSTEM_HIDDEN_FIELDS = {"source_extraction_id", "source_extraction_ids"}
+
 
 @dataclass(slots=True)
 class PatchMergePatch:
@@ -183,7 +185,7 @@ def _render_one_field_diff_patch(index: int, patch: PatchMergePatch) -> str:
         f"target_name: {patch.target_name}",
     ]
     if patch.metadata:
-        lines.append(f"metadata: {_compact_value(patch.metadata)}")
+        lines.append(f"metadata: {_compact_value(_hide_system_fields(patch.metadata))}")
     field_diffs = _field_diffs(patch.before_file, patch.after_file)
     if not field_diffs:
         lines.extend(["", "No changed fields."])
@@ -222,6 +224,8 @@ def _field_diffs(before_file: MemoryFile | None, after_file: MemoryFile) -> list
 
 def _memory_file_fields(file: MemoryFile) -> dict[str, Any]:
     fields = dict(file.extra_fields or {})
+    for hidden_field in _SYSTEM_HIDDEN_FIELDS:
+        fields.pop(hidden_field, None)
     if file.memory_type is not None:
         fields["memory_type"] = file.memory_type
     if file.content:
@@ -261,6 +265,18 @@ def _compact_value(value: Any) -> str:
     import json
 
     return json.dumps(value, ensure_ascii=False, sort_keys=True)
+
+
+def _hide_system_fields(value: Any) -> Any:
+    if isinstance(value, dict):
+        return {
+            key: _hide_system_fields(item)
+            for key, item in value.items()
+            if key not in _SYSTEM_HIDDEN_FIELDS
+        }
+    if isinstance(value, list):
+        return [_hide_system_fields(item) for item in value]
+    return value
 
 
 def _dedupe_uris(uris: list[str] | None) -> list[str]:
