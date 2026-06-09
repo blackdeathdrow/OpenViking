@@ -548,7 +548,13 @@ class ContentWriteCoordinator:
                 raise InvalidArgumentError(
                     f"memory write target must be inside a memory type directory: {uri}"
                 )
-            root_uri = VikingURI.build(*parts[: memories_idx + 2])
+            if len(parts) >= memories_idx + 3:
+                parent = VikingURI(uri).parent
+                if parent is None:
+                    raise InvalidArgumentError(f"could not resolve write root for {uri}")
+                root_uri = parent.uri
+            else:
+                root_uri = VikingURI.build(*parts[: memories_idx + 2])
         elif parts[0] == "agent":
             try:
                 skills_idx = parts.index("skills")
@@ -567,7 +573,13 @@ class ContentWriteCoordinator:
                     raise InvalidArgumentError(
                         f"memory write target must be inside a memory type directory: {uri}"
                     )
-                root_uri = VikingURI.build(*parts[: memories_idx + 2])
+                if len(parts) >= memories_idx + 3:
+                    parent = VikingURI(uri).parent
+                    if parent is None:
+                        raise InvalidArgumentError(f"could not resolve write root for {uri}")
+                    root_uri = parent.uri
+                else:
+                    root_uri = VikingURI.build(*parts[: memories_idx + 2])
 
         stat = await self._safe_stat(root_uri, ctx=ctx, allow_not_found=_allow_not_found)
         if stat.get("not_found") or not stat.get("isDir"):
