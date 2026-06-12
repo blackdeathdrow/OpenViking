@@ -22,6 +22,7 @@ from rich.progress import (
     TimeElapsedColumn,
     TimeRemainingColumn,
 )
+from rich.table import Column
 from rich.text import Text
 
 
@@ -45,16 +46,14 @@ class ThreeStateBarColumn(ProgressColumn):
 
     def __init__(
         self,
-        bar_width: Optional[int] = None,
+        bar_width: int = 60,
         style: str = "bar.complete",
         running_style: str = "bar.finished",
         complete_style: Optional[str] = None,
         finished_style: Optional[str] = None,
         pulse_style: str = "bar.pulse",
-        table_column: Optional["Column"] = None,
+        table_column: Optional[Column] = None,
     ) -> None:
-        from rich.table import Column
-
         self.bar_width = bar_width
         self.style = style
         # "complete" = done portion, "finished" = running portion.
@@ -69,10 +68,7 @@ class ThreeStateBarColumn(ProgressColumn):
 
     def render(self, task: Task) -> Text:
         """Render the three-state bar."""
-        if self.bar_width is None:
-            bar_width = task.width or 40
-        else:
-            bar_width = self.bar_width
+        bar_width = self.bar_width or 40
 
         total = max(task.total or 0, 0)
         done = max(task.completed or 0, 0)
@@ -135,7 +131,6 @@ def make_three_state_progress(
         TimeRemainingColumn(),
         console=console,
         transient=transient,
-        expand=True,
     )
     task_id = progress.add_task(description, total=0, running=0)
     return progress, task_id
