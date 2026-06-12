@@ -177,11 +177,11 @@ class MemoryStore:
                 query=current_message,
                 user_ids=user_ids,
                 peer_ids=search_peer_ids,
-                limit=10,
+                limit=30,
             )
             if not result:
                 return ""
-            result = self._limit_memories(result, limit=10)
+            result = self._limit_memories(result, limit=30)
 
             # Log raw search results for debugging
             memory_list = []
