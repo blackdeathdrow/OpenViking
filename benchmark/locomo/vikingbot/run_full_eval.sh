@@ -11,6 +11,7 @@
 #   ./run_full_eval.sh 0 2 --group-chat                  # 单题群聊模式
 #   ./run_full_eval.sh --skip-import --auto-commit  # 评测全部，跳过导入，自动提交
 #   ./run_full_eval.sh --retry-wrong result/locomo_result_xxx.csv  # 只重跑错题
+#   ./run_full_eval.sh --parallel-import-sessions 20 0 1  # 并发导入 session
 
 set -e
 
@@ -30,6 +31,7 @@ for arg in "$@"; do
         echo "  --no-group-chat   非群聊模式（默认），使用 sample_id 作为 Peer"
         echo "  --auto-commit     自动提交未提交的代码变更，结果文件名带 commit id 和时间戳"
         echo "  --retry-wrong CSV 只重跑指定结果文件中的有效错题（导入相关对话+重新问答）"
+        echo "  --parallel-import-sessions N  并发导入 session（传给 import_to_ov.py --parallel-samples）"
         exit 0
     fi
 done
@@ -39,6 +41,7 @@ SKIP_IMPORT=false
 GROUP_CHAT=false
 AUTO_COMMIT=false
 RETRY_WRONG=""
+PARALLEL_IMPORT_SESSIONS=""
 
 if command -v python3 >/dev/null 2>&1; then
     PYTHON_BIN="python3"
@@ -113,6 +116,11 @@ for arg in "$@"; do
         PREV_ARG=""
         continue
     fi
+    if [ "$PREV_ARG" = "--parallel-import-sessions" ]; then
+        PARALLEL_IMPORT_SESSIONS="$arg"
+        PREV_ARG=""
+        continue
+    fi
     if [ "$arg" = "--skip-import" ]; then
         SKIP_IMPORT=true
     elif [ "$arg" = "--group-chat" ]; then
@@ -122,6 +130,9 @@ for arg in "$@"; do
     elif [ "$arg" = "--auto-commit" ]; then
         AUTO_COMMIT=true
     elif [ "$arg" = "--retry-wrong" ]; then
+        PREV_ARG="$arg"
+        continue
+    elif [ "$arg" = "--parallel-import-sessions" ]; then
         PREV_ARG="$arg"
         continue
     fi
@@ -136,7 +147,7 @@ for arg in "$@"; do
         SKIP_NEXT=false
         continue
     fi
-    if [ "$arg" = "--retry-wrong" ]; then
+    if [ "$arg" = "--retry-wrong" ] || [ "$arg" = "--parallel-import-sessions" ]; then
         SKIP_NEXT=true
         continue
     fi
@@ -160,13 +171,16 @@ if [ -n "${OPENVIKING_API_KEY:-}" ]; then
     fi
     IMPORT_OPTS+=("--no-separate-user-by-sample")
 fi
+if [ -n "${PARALLEL_IMPORT_SESSIONS:-}" ]; then
+    IMPORT_OPTS+=("--parallel-samples" "$PARALLEL_IMPORT_SESSIONS")
+fi
 
 SAMPLE=${ARGS[0]}
 QUESTION_INDEX=${ARGS[1]}
 INPUT_FILE="$SCRIPT_DIR/../data/locomo10.json"
 
 # Export for inline Python usage
-export SCRIPT_DIR INPUT_FILE RETRY_WRONG ACCOUNT OPENVIKING_URL OPENVIKING_API_KEY OPENVIKING_USER OPENVIKING_AUTH_MODE GROUP_CHAT
+export SCRIPT_DIR INPUT_FILE RETRY_WRONG PARALLEL_IMPORT_SESSIONS ACCOUNT OPENVIKING_URL OPENVIKING_API_KEY OPENVIKING_USER OPENVIKING_AUTH_MODE GROUP_CHAT
 
 # auto-commit 逻辑
 if [ "$AUTO_COMMIT" = "true" ]; then
