@@ -453,7 +453,7 @@ def main():
         "--count", type=int, default=None, help="Number of QA questions to run, default all"
     )
     parser.add_argument(
-        "--threads", type=int, default=200, help="Number of concurrent threads, default: 200"
+        "--threads", type=int, default=150, help="Number of concurrent threads, default: 150"
     )
     parser.add_argument(
         "--update-mode",
