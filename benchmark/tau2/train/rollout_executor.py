@@ -10,6 +10,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
+from fastapi.encoders import jsonable_encoder
+
 from openviking.message import Message, TextPart, ToolPart
 from openviking.session.train import (
     Case,
@@ -205,6 +207,8 @@ class Tau2RolloutExecutor:
             try:
                 _append_final_answer_for_tau2_evaluation(provider.env, final_content)
                 reward, evaluation_result = provider.env._get_reward()
+                reward = _to_jsonable(reward)
+                evaluation_result = _to_jsonable(evaluation_result)
             except Exception as exc:
                 logger.exception(
                     "tau2 reward calculation failed case=%s domain=%s task_id=%s",
@@ -510,12 +514,15 @@ def _build_rollout_messages(
                     )
                 )
     messages.append(_message("tau2-final", "assistant", final_content or ""))
-    success = reward == 1 or reward == 1.0
+    reward_jsonable = _to_jsonable(reward)
+    evaluation_jsonable = _to_jsonable(evaluation_result)
+    success = reward_jsonable == 1 or reward_jsonable == 1.0
     messages.append(
         _message(
             "tau2-reward",
             "user",
-            f"task_success: {success}\ntask_reward: {reward}\nevaluation report: {evaluation_result}",
+            f"task_success: {success}\ntask_reward: {reward_jsonable}\n"
+            f"evaluation report: {_stringify(evaluation_jsonable)}",
         )
     )
     return messages
@@ -545,8 +552,9 @@ def _tau2_evaluation(*, reward: Any, evaluation_result: Any) -> RubricEvaluation
     score = _safe_float(reward, default=0.0)
     passed = score >= 1.0
     feedback = [] if passed else ["tau2 environment reward is below 1.0."]
-    if evaluation_result is not None:
-        feedback.append(_stringify(evaluation_result))
+    evaluation_jsonable = _to_jsonable(evaluation_result)
+    if evaluation_jsonable is not None:
+        feedback.append(_stringify(evaluation_jsonable))
     return RubricEvaluation(
         passed=passed,
         score=score,
@@ -556,7 +564,7 @@ def _tau2_evaluation(*, reward: Any, evaluation_result: Any) -> RubricEvaluation
                 passed=passed,
                 score=score,
                 feedback=feedback,
-                evidence=[_stringify(evaluation_result)] if evaluation_result is not None else [],
+                evidence=[_stringify(evaluation_jsonable)] if evaluation_jsonable is not None else [],
                 metadata={"reward": score},
             )
         ],
@@ -564,7 +572,7 @@ def _tau2_evaluation(*, reward: Any, evaluation_result: Any) -> RubricEvaluation
         metadata={
             "source": "tau2_executor",
             "reward": score,
-            "evaluation_result": evaluation_result,
+            "evaluation_result": evaluation_jsonable,
         },
     )
 
@@ -576,9 +584,13 @@ def _safe_float(value: Any, *, default: float) -> float:
         return default
 
 
+def _to_jsonable(value: Any) -> Any:
+    return jsonable_encoder(value)
+
+
 def _stringify(value: Any) -> str:
     if isinstance(value, str):
         return value
     import json
 
-    return json.dumps(value, ensure_ascii=False, sort_keys=True)
+    return json.dumps(_to_jsonable(value), ensure_ascii=False, sort_keys=True)

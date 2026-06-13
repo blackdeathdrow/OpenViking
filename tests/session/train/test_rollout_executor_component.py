@@ -151,6 +151,36 @@ def test_tau2_rollout_messages_use_structured_tool_parts():
     assert tool_result_message.parts[0].tool_output == '{"membership": "gold"}'
 
 
+
+def test_tau2_reward_info_is_json_safe_in_rollout_messages_and_evaluation():
+    import json
+
+    from benchmark.tau2.train.rollout_executor import _build_rollout_messages, _tau2_evaluation
+    from tau2.data_model.simulation import RewardInfo, RewardType
+
+    reward_info = RewardInfo(
+        reward=1.0,
+        reward_basis=[RewardType.DB],
+        reward_breakdown={RewardType.DB: 1.0},
+    )
+
+    rollout_messages = _build_rollout_messages(
+        system_prompt="policy",
+        user_prompt="user request",
+        tools_used=[],
+        final_content="done",
+        evaluation_result=reward_info,
+        reward=1.0,
+    )
+    evaluation = _tau2_evaluation(reward=1.0, evaluation_result=reward_info)
+
+    reward_message = rollout_messages[-1].content
+    assert "'reward': 1.0" not in reward_message
+    assert '"reward": 1.0' in reward_message
+    assert '"reward_basis": ["DB"]' in evaluation.feedback[0]
+    json.dumps(evaluation.metadata, sort_keys=True)
+
+
 def test_tau2_native_env_reward_handles_required_id_and_tool_call_ids():
     from benchmark.tau2.common.tau2_env.tau2_environment import Tau2BenchEnv
 
