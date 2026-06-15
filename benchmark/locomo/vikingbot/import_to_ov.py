@@ -21,9 +21,10 @@ import time
 import traceback
 from datetime import datetime, timedelta
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Awaitable, Callable, Dict, List, Optional, Tuple, TypeVar
 
 import openviking as ov
+import httpx
 
 from progress_utils import (
     AsyncProgressTracker,
@@ -33,6 +34,139 @@ from progress_utils import (
 
 
 TRACE_ID_RE = re.compile(r"\btrace_?id[=:\s]+([^,\s:)\]]+)")
+
+_RetryResult = TypeVar("_RetryResult")
+_TRANSIENT_HTTP_ERRORS = (
+    httpx.ReadError,
+    httpx.ConnectError,
+    httpx.RemoteProtocolError,
+    httpx.TimeoutException,
+)
+
+
+def _retry_delay(attempt: int, *, base: float = 0.5, cap: float = 8.0) -> float:
+    """Deterministic exponential backoff capped for benchmark imports."""
+    return min(cap, base * (2 ** max(0, attempt - 1)))
+
+
+def _transport_error_message(exc: BaseException) -> str:
+    text = str(exc)
+    return f"{type(exc).__name__}: {text}" if text else repr(exc)
+
+
+async def _retry_transient_http(
+    label: str,
+    operation: Callable[[], Awaitable[_RetryResult]],
+    *,
+    attempts: int = 5,
+) -> _RetryResult:
+    """Retry transient HTTP transport failures with exponential backoff.
+
+    Used only around operations where retrying is safe enough for import:
+    create_session has no user-visible payload yet, commit is protected by
+    session archive semantics, and task polling is read-only. Message writes
+    are intentionally not wrapped here because the API is append-only and a
+    lost response could otherwise duplicate messages.
+    """
+    last_exc: BaseException | None = None
+    for attempt in range(1, max(1, attempts) + 1):
+        try:
+            return await operation()
+        except _TRANSIENT_HTTP_ERRORS as exc:
+            last_exc = exc
+            if attempt >= attempts:
+                break
+            delay = _retry_delay(attempt)
+            print(
+                f"    -> [RETRY] {label} attempt {attempt}/{attempts} "
+                f"failed with {_transport_error_message(exc)}; retrying in {delay:.1f}s",
+                file=sys.stderr,
+            )
+            await asyncio.sleep(delay)
+    assert last_exc is not None
+    raise last_exc
+
+
+async def _list_session_commit_tasks(
+    client: Any,
+    *,
+    session_id: str,
+    limit: int = 20,
+) -> list[dict[str, Any]]:
+    """Best-effort raw task listing for recovering from a lost commit response."""
+    http = getattr(client, "_http", None)
+    if http is None:
+        return []
+    response = await http.get(
+        "/api/v1/tasks",
+        params={
+            "task_type": "session_commit",
+            "resource_id": session_id,
+            "limit": limit,
+        },
+    )
+    data = client._handle_response(response)
+    if isinstance(data, list):
+        return [item for item in data if isinstance(item, dict)]
+    return []
+
+
+def _latest_active_commit_task(tasks: list[dict[str, Any]]) -> dict[str, Any] | None:
+    for task in tasks:
+        if task.get("status") in {"pending", "running", "completed"}:
+            return task
+    return tasks[0] if tasks else None
+
+
+async def _recover_commit_after_transport_error(
+    client: Any,
+    *,
+    session_id: str,
+    previous_commit_count: int,
+    attempts: int = 6,
+) -> dict[str, Any] | None:
+    """Recover a commit result when the POST succeeded but response read failed.
+
+    Commit phase 1 clears/archives live messages and creates a session_commit
+    task. If a ReadError happens while reading the response, retrying POST can
+    race with that state transition. Prefer detecting the already-created task
+    and return an equivalent accepted result.
+    """
+    for attempt in range(1, attempts + 1):
+        try:
+            session = await _retry_transient_http(
+                f"get_session_after_commit_read_error session={session_id}",
+                lambda: client.get_session(session_id),
+                attempts=2,
+            )
+            commit_count = int(session.get("commit_count") or 0)
+            if commit_count > previous_commit_count:
+                tasks = await _retry_transient_http(
+                    f"list_commit_tasks session={session_id}",
+                    lambda: _list_session_commit_tasks(client, session_id=session_id),
+                    attempts=2,
+                )
+                task = _latest_active_commit_task(tasks)
+                if task is not None:
+                    return {
+                        "status": "accepted",
+                        "session_id": session_id,
+                        "task_id": task.get("task_id"),
+                        "trace_id": "",
+                        "recovered_after_read_error": True,
+                    }
+                return {
+                    "status": "accepted",
+                    "session_id": session_id,
+                    "task_id": None,
+                    "trace_id": "",
+                    "recovered_after_read_error": True,
+                }
+        except _TRANSIENT_HTTP_ERRORS:
+            pass
+        await asyncio.sleep(_retry_delay(attempt, base=0.5, cap=5.0))
+    return None
+
 
 
 def _get_session_number(session_key: str) -> int:
@@ -261,11 +395,13 @@ def record_failed_session(
     trace_id = result.get("trace_id") or extract_trace_id_from_error(result.get("error", ""))
     session = result.get("session") or result.get("session_key") or ""
     sample_id = result.get("sample_id") or ""
+    display_id = result.get("display_id") or ""
     error_msg = str(result.get("error", ""))[:120]
     failed_sessions.append(
         {
             "session": str(session),
             "sample_id": str(sample_id),
+            "display_id": str(display_id),
             "trace_id": str(trace_id) if trace_id else "",
             "error": error_msg,
         }
@@ -418,11 +554,15 @@ async def viking_ingest(
     memory_policy = build_memory_policy(group_chat)
 
     try:
-        # Create session
-        create_res = await client.create_session(memory_policy=memory_policy)
+        # Create session. Safe to retry: no messages have been written yet.
+        create_res = await _retry_transient_http(
+            "create_session",
+            lambda: client.create_session(memory_policy=memory_policy),
+        )
         session_id = create_res["session_id"]
 
-        # Add messages one by one with created_at
+        # Add messages one by one with created_at. Do not retry append-only
+        # message writes after a lost response; that can duplicate messages.
         for idx, msg in enumerate(messages):
             msg_created_at = None
             if base_datetime:
@@ -438,8 +578,30 @@ async def viking_ingest(
                 peer_id=msg.get("peer_id"),
             )
 
-        # Commit
-        result = await client.commit_session(session_id, telemetry=True)
+        before_commit = await _retry_transient_http(
+            f"get_session_before_commit session={session_id}",
+            lambda: client.get_session(session_id),
+        )
+        previous_commit_count = int(before_commit.get("commit_count") or 0)
+
+        # Commit. If the response read fails after the server accepted the
+        # commit, recover by checking session commit_count and commit tasks
+        # before retrying the POST. This avoids a blind duplicate commit.
+        try:
+            result = await _retry_transient_http(
+                f"commit_session session={session_id}",
+                lambda: client.commit_session(session_id, telemetry=True),
+                attempts=2,
+            )
+        except _TRANSIENT_HTTP_ERRORS as exc:
+            recovered = await _recover_commit_after_transport_error(
+                client,
+                session_id=session_id,
+                previous_commit_count=previous_commit_count,
+            )
+            if recovered is None:
+                raise exc
+            result = recovered
 
         # Accept both "committed" and "accepted" as success - accepted means the session was archived
         if result.get("status") not in ("committed", "accepted"):
@@ -452,7 +614,10 @@ async def viking_ingest(
             # 轮询任务状态直到完成
             max_attempts = 2400  # 最多等待40分钟
             for _attempt in range(max_attempts):
-                task = await client.get_task(task_id)
+                task = await _retry_transient_http(
+                    f"get_task task={task_id}",
+                    lambda: client.get_task(task_id),
+                )
                 status = task.get("status") if task else "unknown"
                 if status == "completed":
                     token_usage = _parse_token_usage(task)
@@ -1089,7 +1254,9 @@ async def run_import(args: argparse.Namespace) -> None:
     if failed_sessions:
         print(f"\nFailed sessions ({len(failed_sessions)}):", file=sys.stderr)
         for idx, s in enumerate(failed_sessions, 1):
-            session_label = s.get("session") or s.get("sample_id") or "unknown"
+            display_id = s.get("display_id") or s.get("sample_id") or "unknown"
+            session = s.get("session") or "unknown"
+            session_label = f"{display_id}/{session}"
             trace = s.get("trace_id", "")
             trace_part = f", trace_id={trace}" if trace else ", trace_id=(none)"
             error_part = s.get("error", "")
