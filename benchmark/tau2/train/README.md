@@ -4,6 +4,18 @@ Tau2 training uses the generic OpenViking session/train batch pipeline.  The
 Tau2-specific code in this directory only starts the Tau2 dataset service and
 provides thin defaults for the generic runner.
 
+## 0. Prerequisites: Start OpenViking server
+
+The vikingbot rollout backend needs a running OpenViking server for memory
+recall (experience search, user profile read, etc.).
+
+```bash
+# Quick restart (kills existing, cleans data, starts fresh with bot API)
+bash bot/scripts/restart_openviking_server.sh
+```
+
+Default server URL is `http://127.0.0.1:1933`, configured in `~/.openviking/ov.conf`.
+
 ## 1. Start the Tau2 service
 
 ```bash
@@ -48,14 +60,15 @@ bash benchmark/tau2/train/run_batch_train_eval.sh \
   --trials 8
 ```
 
-## 3. Train with a pre-training test score
+## 3. Train with a cached pre-training test score
 
-Use `--baseline-eval` to evaluate the test split before training, then train,
-then evaluate the final test score:
+The runner evaluates the test split before training automatically. For the same
+dataset/domain, `--eval-limit`, `--trials`, and rollout options, this baseline is
+cached under `result/tau2/train/cache/baseline/` and reused by later runs. Use
+`--force-baseline-recompute` to refresh it.
 
 ```bash
 bash benchmark/tau2/train/run_batch_train_eval.sh \
-  --baseline-eval \
   --epochs 4 \
   --train-limit 25 \
   --eval-limit 25 \
@@ -78,7 +91,7 @@ Default concurrency and output behavior:
 - rollout concurrency: `150`
 - session.commit concurrency: `100`
 - eval trials: `8`
-- `--clean-result` is enabled by default and clears previous `result/tau2/train/` artifacts before each run. Use `--no-clean-result` to keep previous runs.
+- `--clean-result` is enabled by default and clears previous `result/tau2/train/` run artifacts before each run, while preserving `result/tau2/train/cache/`. Use `--no-clean-result` to keep previous runs.
 - Streaming JSONL events are written to `result/tau2/train/<domain>_<timestamp>/events.jsonl`; train commit events include `trace_id` for live `tail -f` debugging. Use `--events-output` to override the path.
 
 ### Common options
@@ -94,7 +107,7 @@ Default concurrency and output behavior:
 | `--train-limit` | unlimited | Cap train split size (for smoke tests) |
 | `--eval-limit` | unlimited | Cap eval split size (for smoke tests) |
 | `--max-iterations` | `30` | Max steps per rollout |
-| `--baseline-eval` | off | Run pre-training eval before the first epoch |
+| `--force-baseline-recompute` | off | Recompute cached pre-training test baseline instead of reusing it |
 | `--eval-each-epoch` | off | Run held-out eval after every training epoch |
 | `--clean-result` / `--no-clean-result` | clean | Whether to wipe previous result artifacts |
 | `--output` | auto | JSON report output path |
@@ -112,7 +125,6 @@ Quick smoke test (1 train, 1 eval, 1 trial):
 
 ```bash
 bash benchmark/tau2/train/run_batch_train_eval.sh \
-  --baseline-eval \
   --epochs 1 \
   --trials 1 \
   --train-limit 1 \
@@ -127,8 +139,7 @@ bash benchmark/tau2/train/run_batch_train_eval.sh \
   --epochs 4 \
   --concurrency 150 \
   --commit-concurrency 100 \
-  --trials 8 \
-  --baseline-eval
+  --trials 8
 ```
 
 ## 5. Result and rollout artifacts
@@ -146,4 +157,3 @@ result/tau2/train/<domain>_<timestamp>/
 Each rollout artifact group is one original task; each rollout has its own subdirectory
 with `memory_context.md`, `messages.json`, `tool_calls.json`, `evaluation.json`,
 and, for train rollouts when available, `commit_result.json` and `memory_diff.json`.
-

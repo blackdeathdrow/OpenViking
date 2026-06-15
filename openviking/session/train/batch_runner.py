@@ -7,6 +7,7 @@ import os
 import shutil
 from dataclasses import dataclass, field
 from datetime import datetime
+from hashlib import sha256
 from pathlib import Path
 from typing import Any
 
@@ -59,7 +60,7 @@ class BatchTrainEvalConfig:
     train_limit: int | None = None
     eval_limit: int | None = None
     benchmark_service_url: str | None = None
-    baseline_eval_enabled: bool = False
+    baseline_force_recompute: bool = False
     eval_each_epoch: bool = False
     trials: int = 8
     clean_result: bool = True
@@ -117,7 +118,6 @@ class BatchTrainEvalReport:
     run_id: str = ""
     server_url: str = ""
     benchmark_service_url: str | None = None
-    baseline_eval_enabled: bool = False
     eval_each_epoch: bool = False
     trials: int = 8
     rollouts_root: str | None = None
@@ -125,6 +125,9 @@ class BatchTrainEvalReport:
     latest_failed_rollout: str | None = None
     clean_result: bool = True
     events_path: str | None = None
+    baseline_cache_path: str | None = None
+    baseline_cache_hit: bool = False
+    baseline_force_recompute: bool = False
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -146,7 +149,6 @@ class BatchTrainEvalReport:
             "run_id": self.run_id,
             "server_url": self.server_url,
             "benchmark_service_url": self.benchmark_service_url,
-            "baseline_eval_enabled": self.baseline_eval_enabled,
             "eval_each_epoch": self.eval_each_epoch,
             "trials": self.trials,
             "rollouts_root": self.rollouts_root,
@@ -154,6 +156,9 @@ class BatchTrainEvalReport:
             "latest_failed_rollout": self.latest_failed_rollout,
             "clean_result": self.clean_result,
             "events_path": self.events_path,
+            "baseline_cache_path": self.baseline_cache_path,
+            "baseline_cache_hit": self.baseline_cache_hit,
+            "baseline_force_recompute": self.baseline_force_recompute,
         }
 
 
@@ -191,6 +196,8 @@ async def run_batch_train_eval(config: BatchTrainEvalConfig) -> BatchTrainEvalRe
             eval_limit=config.eval_limit,
             trials=config.trials,
             clean_result=config.clean_result,
+            baseline_force_recompute=config.baseline_force_recompute,
+            baseline_cache_path=str(_baseline_cache_path(config)),
         )
         policy_trainer = SessionCommitPolicyTrainer(
             client=client,
@@ -211,32 +218,30 @@ async def run_batch_train_eval(config: BatchTrainEvalConfig) -> BatchTrainEvalRe
         )
 
         baseline_eval: dict[str, Any] | None = None
+        baseline_cache_hit = False
+        baseline_cache_path = _baseline_cache_path(config)
         final_eval: dict[str, Any] | None = None
         report_builder = PipelineReportBuilder(trial_index_key="eval_trial")
 
         test_loader = _case_loader(config, split="test", limit=config.eval_limit)
-        if config.baseline_eval_enabled and await test_loader.split_exists():
-            baseline_result = await pipeline.eval(
+        if await test_loader.split_exists():
+            baseline_result, baseline_cache_hit = await _load_or_run_baseline_eval(
+                config=config,
+                pipeline=pipeline,
                 case_loader=test_loader,
                 policy_set=policy_set,
-                context=_pipeline_context(
+                report_builder=report_builder,
+                event_recorder=event_recorder,
+            )
+            if baseline_result is not None:
+                rollout_artifact_recorder.record_eval(
+                    label="baseline_test_rollout",
                     epoch=-1,
-                    training=False,
-                    max_epochs=1,
-                    rollout_stage="baseline_test_rollout",
-                    eval_split="test",
-                    eval_trials=config.trials,
-                    trial_index_key="eval_trial",
-                    report_builder=report_builder,
-                    event_recorder=event_recorder,
-                ),
-            )
-            rollout_artifact_recorder.record_eval(
-                label="baseline_test_rollout",
-                epoch=-1,
-                analyses=baseline_result.analyses,
-            )
-            baseline_eval = baseline_result.metadata["report"]
+                    analyses=baseline_result.analyses,
+                )
+                baseline_eval = baseline_result.metadata["report"]
+            else:
+                baseline_eval = _load_baseline_cache(baseline_cache_path)
 
         train_loader = _case_loader(config, split="train", limit=config.train_limit)
 
@@ -317,7 +322,6 @@ async def run_batch_train_eval(config: BatchTrainEvalConfig) -> BatchTrainEvalRe
             run_id=policy_trainer.run_id,
             server_url=client_url(client),
             benchmark_service_url=config.benchmark_service_url,
-            baseline_eval_enabled=config.baseline_eval_enabled,
             eval_each_epoch=config.eval_each_epoch,
             trials=config.trials,
             rollouts_root=rollout_artifact_index.rollouts_root,
@@ -325,6 +329,9 @@ async def run_batch_train_eval(config: BatchTrainEvalConfig) -> BatchTrainEvalRe
             latest_failed_rollout=rollout_artifact_index.latest_failed_rollout,
             clean_result=config.clean_result,
             events_path=str(_events_path(config)),
+            baseline_cache_path=str(baseline_cache_path),
+            baseline_cache_hit=baseline_cache_hit,
+            baseline_force_recompute=config.baseline_force_recompute,
         )
         _write_report(report, config)
         await event_recorder.record(
@@ -336,6 +343,8 @@ async def run_batch_train_eval(config: BatchTrainEvalConfig) -> BatchTrainEvalRe
             rollouts_index_path=report.rollouts_index_path,
             latest_failed_rollout=report.latest_failed_rollout,
             accuracy_delta=report.accuracy_delta,
+            baseline_cache_path=report.baseline_cache_path,
+            baseline_cache_hit=report.baseline_cache_hit,
         )
         await emit_run_summary(
             train_context,
@@ -347,6 +356,7 @@ async def run_batch_train_eval(config: BatchTrainEvalConfig) -> BatchTrainEvalRe
                 "trials": config.trials,
                 "run_id": policy_trainer.run_id,
                 "trace_id": report.trace_id,
+                "baseline_cache_hit": report.baseline_cache_hit,
             },
             baseline_eval=baseline_eval,
             final_eval=final_eval,
@@ -406,6 +416,95 @@ def _policy_set_metadata(config: BatchTrainEvalConfig, client: AsyncHTTPClient) 
 
 def client_url(client: AsyncHTTPClient) -> str:
     return str(getattr(client, "_url", ""))
+
+
+async def _load_or_run_baseline_eval(
+    *,
+    config: BatchTrainEvalConfig,
+    pipeline: OfflinePolicyOptimizationPipeline,
+    case_loader: RemoteCaseLoader,
+    policy_set: ExperienceSet,
+    report_builder: PipelineReportBuilder,
+    event_recorder: JsonlEventRecorder,
+) -> tuple[Any | None, bool]:
+    cache_path = _baseline_cache_path(config)
+    if not config.baseline_force_recompute:
+        cached_report = _load_baseline_cache(cache_path)
+        if cached_report is not None:
+            await event_recorder.record(
+                "baseline_cache_hit",
+                stage="baseline_cache",
+                baseline_cache_path=str(cache_path),
+            )
+            return None, True
+
+    await event_recorder.record(
+        "baseline_cache_recompute" if cache_path.exists() else "baseline_cache_miss",
+        stage="baseline_cache",
+        baseline_cache_path=str(cache_path),
+    )
+    baseline_result = await pipeline.eval(
+        case_loader=case_loader,
+        policy_set=policy_set,
+        context=_pipeline_context(
+            epoch=-1,
+            training=False,
+            max_epochs=1,
+            rollout_stage="baseline_test_rollout",
+            eval_split="test",
+            eval_trials=config.trials,
+            trial_index_key="eval_trial",
+            report_builder=report_builder,
+            event_recorder=event_recorder,
+        ),
+    )
+    _write_baseline_cache(cache_path, baseline_result.metadata["report"], config=config)
+    await event_recorder.record(
+        "baseline_cache_write",
+        stage="baseline_cache",
+        baseline_cache_path=str(cache_path),
+    )
+    return baseline_result, False
+
+
+def _write_baseline_cache(
+    path: Path,
+    report: dict[str, Any],
+    *,
+    config: BatchTrainEvalConfig,
+) -> None:
+    payload = {
+        "cache_version": 1,
+        "cache_key": _baseline_cache_key(config),
+        "dataset": config.dataset,
+        "domain": config.domain,
+        "split": "test",
+        "eval_limit": config.eval_limit,
+        "trials": config.trials,
+        "max_iterations": config.max_iterations,
+        "keep_default_tools": config.keep_default_tools,
+        "created_at": datetime.now().isoformat(),
+        "report": report,
+    }
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+
+
+def _load_baseline_cache(path: Path) -> dict[str, Any] | None:
+    if not path.exists():
+        return None
+    payload = json.loads(path.read_text(encoding="utf-8"))
+    if payload.get("cache_version") != 1:
+        raise ValueError(f"unsupported baseline cache version in {path}")
+    report = payload.get("report")
+    if not isinstance(report, dict):
+        raise ValueError(f"baseline cache file has no report: {path}")
+    return {
+        **report,
+        "baseline_cache_hit": True,
+        "baseline_cache_path": str(path),
+    }
+
 
 
 def _build_pipeline(
@@ -535,6 +634,38 @@ def _default_output_path(config: BatchTrainEvalConfig) -> str:
     return str(_run_output_dir(config) / "report.json")
 
 
+def _baseline_cache_path(config: BatchTrainEvalConfig) -> Path:
+    return (
+        _result_base_dir(config)
+        / "cache"
+        / "baseline"
+        / f"{_baseline_cache_key(config)}.json"
+    )
+
+
+def _baseline_cache_key(config: BatchTrainEvalConfig) -> str:
+    payload = {
+        "dataset": config.dataset,
+        "domain": config.domain,
+        "split": "test",
+        "eval_limit": config.eval_limit,
+        "trials": config.trials,
+        "max_iterations": config.max_iterations,
+        "keep_default_tools": config.keep_default_tools,
+    }
+    stable = json.dumps(payload, sort_keys=True, separators=(",", ":"), ensure_ascii=False)
+    digest = sha256(stable.encode("utf-8")).hexdigest()[:16]
+    limit = "all" if config.eval_limit is None else str(config.eval_limit)
+    return f"{_cache_slug(config.domain)}_test_limit-{limit}_trials-{config.trials}_{digest}"
+
+
+def _cache_slug(value: str) -> str:
+    return (
+        "".join(ch if ch.isalnum() or ch in ("-", "_") else "-" for ch in value).strip("-")
+        or "default"
+    )
+
+
 def _clean_result_dir(config: BatchTrainEvalConfig) -> None:
     if not config.clean_result:
         return
@@ -547,6 +678,8 @@ def _clean_result_dir(config: BatchTrainEvalConfig) -> None:
     result_dir = _result_base_dir(config)
     if result_dir.exists():
         for child in result_dir.iterdir():
+            if child.name == "cache":
+                continue
             if child.is_symlink() or child.is_file():
                 child.unlink()
             elif child.is_dir():

@@ -214,27 +214,16 @@ class MemoryStore:
         openviking_connection: dict[str, Any] | None = None,
     ) -> str:
         """用当前任务 query 检索 experience 记忆，注入到 system prompt。"""
-        import time
-
         client = None
         try:
-            t0 = time.perf_counter()
             ov_cfg = load_config().ov_server
-            t1 = time.perf_counter()
             client = await VikingClient.create(
                 agent_id=workspace_id,
                 connection=openviking_connection,
             )
-            t2 = time.perf_counter()
             experiences = await client.search_experiences(query, limit=ov_cfg.exp_recall_limit)
-            t3 = time.perf_counter()
             logger.info(
-                f"[READ_EXPERIENCE_MEMORY]: found {len(experiences)} experiences, "
-                f"query={query[:50]}, "
-                f"timings=load_cfg:{(t1-t0)*1000:.0f}ms "
-                f"client_create:{(t2-t1)*1000:.0f}ms "
-                f"search:{(t3-t2)*1000:.0f}ms "
-                f"server_url={getattr(client, 'openviking_config', None) and client.openviking_config.server_url!r}"
+                f"[READ_EXPERIENCE_MEMORY]: found {len(experiences)} experiences, query={query[:50]}"
             )
             for i, exp in enumerate(experiences):
                 uri = exp.get("uri", "") if isinstance(exp, dict) else getattr(exp, "uri", "")
@@ -246,11 +235,7 @@ class MemoryStore:
                 experiences, client, min_score=0.3, max_chars=ov_cfg.exp_recall_max_chars
             )
         except Exception as e:
-            import traceback
-            logger.error(
-                f"[READ_EXPERIENCE_MEMORY]: error. {e}\n"
-                f"{traceback.format_exc()}"
-            )
+            logger.error(f"[READ_EXPERIENCE_MEMORY]: error. {e}")
             return ""
         finally:
             if client:

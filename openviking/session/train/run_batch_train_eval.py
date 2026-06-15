@@ -71,9 +71,12 @@ def parse_args() -> argparse.Namespace:
         help="Limit number of eval cases for smoke tests.",
     )
     parser.add_argument(
-        "--baseline-eval",
+        "--force-baseline-recompute",
         action="store_true",
-        help="Run pre-training baseline eval. Disabled by default.",
+        help=(
+            "Recompute the cached pre-training test baseline instead of reusing an "
+            "existing cache file."
+        ),
     )
     parser.add_argument(
         "--eval-each-epoch",
@@ -130,7 +133,7 @@ async def main_async() -> int:
             train_limit=args.train_limit,
             eval_limit=args.eval_limit,
             benchmark_service_url=args.benchmark_service_url,
-            baseline_eval_enabled=args.baseline_eval,
+            baseline_force_recompute=args.force_baseline_recompute,
             eval_each_epoch=args.eval_each_epoch,
             trials=args.trials,
             clean_result=args.clean_result,
