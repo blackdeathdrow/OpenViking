@@ -747,7 +747,7 @@ export function ZoukInteractiveBlog({ route }) {
   const isPostRoute = route?.name === 'post';
   const panelVisible = open || closing;
   const showBottomComposer = isPostRoute && !panelVisible;
-  const showLauncher = !isPostRoute && !panelVisible;
+  const showEdgeToggle = !panelVisible;
   const composerPlaceholder = currentComposerPlaceholder();
   const referencedText = compactText(selectedText);
   const contextUrlChanged = Boolean(sourceUrl && sourceUrl !== lastContextUrl);
@@ -1217,21 +1217,10 @@ export function ZoukInteractiveBlog({ route }) {
         </button>
       ) : null}
 
-      {showLauncher ? (
+      {showEdgeToggle ? (
         <button
           type="button"
-          className="zouk-reader-launcher"
-          aria-label={launcherLabel}
-          onClick={() => openChat()}
-        >
-          <MessageIcon />
-        </button>
-      ) : null}
-
-      {showBottomComposer ? (
-        <button
-          type="button"
-          className="zouk-reader-edge-toggle"
+          className={`zouk-reader-edge-toggle${isPostRoute ? '' : ' zouk-reader-edge-toggle--index'}`}
           aria-label={launcherLabel}
           onClick={() => openChat()}
         />
