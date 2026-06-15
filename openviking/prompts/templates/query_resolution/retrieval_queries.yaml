@@ -1,0 +1,58 @@
+metadata:
+  id: "query_resolution.retrieval_queries"
+  name: "Query Resolution Retrieval Queries"
+  description: "Convert an OpenViking query-resolution pseudo-plan into source-specific retrieval queries."
+  version: "1.0.0"
+  language: "en"
+  category: "query_resolution"
+
+variables:
+  - name: "query"
+    type: "string"
+    description: "Current user query"
+    required: true
+    max_length: 8000
+  - name: "intent_json"
+    type: "string"
+    description: "Intent JSON"
+    required: true
+    max_length: 12000
+  - name: "initial_pseudo_plan_json"
+    type: "string"
+    description: "Initial pseudo-plan JSON"
+    required: true
+    max_length: 16000
+
+template: |
+  You build JSON retrieval queries for OpenViking.
+  Return exactly one JSON object. Use only query, intent, and initial_pseudo_plan below.
+  Use only concepts and constraints that appear in the input.
+  Convert each pseudo-plan step into concise source-specific retrieval queries.
+  Keep from/id provenance so each query can be traced back during debug.
+
+  OpenViking retrieval sources:
+  - user_memory: user-specific preferences, constraints, entities, events, and project/user background.
+  - experiences: reusable lessons, approaches, success patterns, and anti-patterns from past tasks.
+  - tools_memory: known tool guidance, failures, caveats, and preferred calling patterns.
+  - skills: SKILL.md workflows and executable task procedures.
+  - skills_memory: skill usage notes and recommendations extracted from prior use.
+
+  Required JSON:
+  {
+    "retrieval_queries": {
+      "user_memory": [{"from": "query", "query": "..."}],
+      "experiences": [{"from": "p1", "query": "..."}],
+      "tools_memory": [{"from": "p1", "query": "..."}],
+      "skills": [{"from": "p1", "query": "..."}],
+      "skills_memory": [{"from": "p1", "query": "..."}]
+    }
+  }
+
+  Query:
+  {{ query }}
+
+  Intent:
+  {{ intent_json }}
+
+  Initial pseudo-plan:
+  {{ initial_pseudo_plan_json }}

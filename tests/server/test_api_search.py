@@ -272,6 +272,103 @@ async def test_search_level_with_no_matching_results(client_with_resource):
     assert result.get("total", 0) == 0
 
 
+async def test_search_resolution_endpoint_passes_request(client: httpx.AsyncClient, service, monkeypatch):
+    captured = {}
+
+    async def fake_resolve(**kwargs):
+        captured.update(kwargs)
+        return {
+            "resolution_id": "sr_test",
+            "query": kwargs["query"],
+            "pack_markdown": "# Query Resolution Pack\n\n## Original Query\nsample",
+            "intent": {"task_type": "query_resolution"},
+            "selected_context": {},
+            "revised_execution_outline": [],
+            "selection_rationale": [],
+            "discarded_or_deferred": [],
+            "conflicts": [],
+        }
+
+    monkeypatch.setattr(service.search, "resolve", fake_resolve)
+
+    resp = await client.post(
+        "/api/v1/search/resolution",
+        json={
+            "query": "sample",
+            "agent_space": "default",
+            "user_ids": ["user_1"],
+            "session_context": [{"role": "user", "content": "previous"}],
+            "include_debug": True,
+            "limits": {"experiences": 2},
+            "options": {"allow_trajectory_grounding": False},
+        },
+    )
+
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["status"] == "ok"
+    assert body["result"]["resolution_id"] == "sr_test"
+    assert captured["query"] == "sample"
+    assert captured["agent_space"] == "default"
+    assert captured["user_ids"] == ["user_1"]
+    assert captured["session_context"] == [{"role": "user", "content": "previous"}]
+    assert captured["include_debug"] is True
+    assert captured["limits"]["experiences"] == 2
+    assert captured["options"]["allow_trajectory_grounding"] is False
+
+
+async def test_search_resolution_endpoint_loads_session_context(
+    client: httpx.AsyncClient, service, monkeypatch
+):
+    captured = {}
+
+    async def fake_resolve(**kwargs):
+        captured.update(kwargs)
+        return {
+            "resolution_id": "sr_test",
+            "query": kwargs["query"],
+            "pack_markdown": "# Query Resolution Pack",
+        }
+
+    monkeypatch.setattr(service.search, "resolve", fake_resolve)
+    sess_resp = await client.post("/api/v1/sessions", json={})
+    session_id = sess_resp.json()["result"]["session_id"]
+    msg_resp = await client.post(
+        f"/api/v1/sessions/{session_id}/messages",
+        json={"role": "user", "content": "previous session clue"},
+    )
+    assert msg_resp.status_code == 200
+
+    resp = await client.post(
+        "/api/v1/search/resolution",
+        json={"query": "sample", "session_id": session_id},
+    )
+
+    assert resp.status_code == 200
+    assert any(
+        "previous session clue" in item.get("content", "")
+        for item in captured["session_context"]
+    )
+
+
+async def test_search_resolution_returns_pack_without_hits(client: httpx.AsyncClient):
+    resp = await client.post(
+        "/api/v1/search/resolution",
+        json={"query": "how should I handle this task?", "include_debug": True},
+    )
+
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["status"] == "ok"
+    result = body["result"]
+    assert result["resolution_id"].startswith("sr_")
+    assert result["query"] == "how should I handle this task?"
+    assert "# Query Resolution Pack" in result["pack_markdown"]
+    assert "Suggested Execution Outline" in result["pack_markdown"]
+    assert "debug" in result
+    assert "retrieval_queries" in result["debug"]
+
+
 async def test_find_with_level_string_input(client: httpx.AsyncClient, service, monkeypatch):
     captured = {}
 

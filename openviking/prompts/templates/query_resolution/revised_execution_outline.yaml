@@ -1,0 +1,51 @@
+metadata:
+  id: "query_resolution.revised_execution_outline"
+  name: "Query Resolution Revised Execution Outline"
+  description: "Build the final revised execution outline for an OpenViking Query Resolution Pack."
+  version: "1.0.0"
+  language: "en"
+  category: "query_resolution"
+
+variables:
+  - name: "query"
+    type: "string"
+    description: "Current user query"
+    required: true
+    max_length: 8000
+  - name: "intent_json"
+    type: "string"
+    description: "Intent JSON"
+    required: true
+    max_length: 12000
+  - name: "selected_context_json"
+    type: "string"
+    description: "Compacted selected context JSON"
+    required: true
+    max_length: 24000
+  - name: "conflicts_json"
+    type: "string"
+    description: "Conflict decisions JSON"
+    required: true
+    max_length: 12000
+
+template: |
+  You build JSON for the final OpenViking Query Resolution Pack.
+  Return exactly one JSON object. Use only query, intent, selected_context summaries, and conflicts below.
+  Use only concepts and constraints that appear in the input.
+  Build a concise revised execution outline that is supported by selected_context and conflict resolutions.
+  Do not execute the task. Do not include unrelated retrieved items.
+
+  Required JSON:
+  {"revised_execution_outline": ["short guidance step", "another step"]}
+
+  Query:
+  {{ query }}
+
+  Intent:
+  {{ intent_json }}
+
+  Selected context summaries:
+  {{ selected_context_json }}
+
+  Conflicts:
+  {{ conflicts_json }}

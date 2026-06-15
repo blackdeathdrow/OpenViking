@@ -6,7 +6,7 @@ import math
 from typing import Any, Dict, List, Literal, Optional, Union
 
 from fastapi import APIRouter, Depends
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from openviking.core.path_variables import resolve_path_variables
 from openviking.pyagfs.exceptions import AGFSClientError, AGFSNotFoundError
@@ -16,6 +16,7 @@ from openviking.server.error_mapping import map_exception
 from openviking.server.identity import RequestContext
 from openviking.server.models import Response
 from openviking.server.telemetry import run_operation
+from openviking.service.search_service import session_payload_to_resolution_context
 from openviking.telemetry import TelemetryRequest
 from openviking.utils.search_filters import _resolve_levels, merge_time_filter
 from openviking_cli.exceptions import InvalidArgumentError, NotFoundError
@@ -121,6 +122,41 @@ class GlobRequest(BaseModel):
     node_limit: Optional[int] = None
 
 
+class SearchResolutionLimits(BaseModel):
+    """Limits for query resolution pack retrieval."""
+
+    user_memory: int = 5
+    experiences: int = 5
+    tools_memory: int = 5
+    skills: int = 5
+    skills_memory: int = 5
+    trajectory_grounding: int = 2
+    pack_max_tokens: int = 6000
+
+
+class SearchResolutionOptions(BaseModel):
+    """Options for query resolution pack rendering."""
+
+    return_markdown: bool = True
+    return_structured: bool = True
+    allow_trajectory_grounding: bool = True
+    skill_content_mode: Literal["auto", "full", "summary", "link_only"] = "auto"
+
+
+class SearchResolutionRequest(BaseModel):
+    """Request model for OpenViking-side query resolution."""
+
+    query: str
+    agent_space: str = "default"
+    user_ids: List[str] = Field(default_factory=list)
+    session_id: Optional[str] = None
+    session_context: List[Dict[str, Any]] = Field(default_factory=list)
+    include_debug: bool = False
+    limits: SearchResolutionLimits = Field(default_factory=SearchResolutionLimits)
+    options: SearchResolutionOptions = Field(default_factory=SearchResolutionOptions)
+    telemetry: TelemetryRequest = False
+
+
 @router.post("/find")
 async def find(
     request: FindRequest,
@@ -201,6 +237,48 @@ async def search(
     if hasattr(result, "to_dict"):
         result = result.to_dict(include_provenance=request.include_provenance)
     result = _sanitize_floats(result)
+    return Response(
+        status="ok",
+        result=result,
+        telemetry=execution.telemetry,
+    ).model_dump(exclude_none=True)
+
+
+@router.post("/resolution")
+async def resolution(
+    request: SearchResolutionRequest,
+    _ctx: RequestContext = Depends(get_request_context),
+):
+    """Resolve a query into a temporary Query Resolution Pack."""
+    service = get_service()
+
+    async def _resolve():
+        session_context = list(request.session_context or [])
+        if request.session_id:
+            session = service.sessions.session(_ctx, request.session_id)
+            await session.load()
+            session_payload = await session.get_session_context(token_budget=8000)
+            session_context = (
+                session_payload_to_resolution_context(session_payload)
+                + session_context
+            )
+        return await service.search.resolve(
+            query=request.query,
+            ctx=_ctx,
+            agent_space=request.agent_space,
+            user_ids=request.user_ids,
+            session_context=session_context,
+            include_debug=request.include_debug,
+            limits=request.limits.model_dump(),
+            options=request.options.model_dump(),
+        )
+
+    execution = await run_operation(
+        operation="search.resolution",
+        telemetry=request.telemetry,
+        fn=_resolve,
+    )
+    result = _sanitize_floats(execution.result)
     return Response(
         status="ok",
         result=result,

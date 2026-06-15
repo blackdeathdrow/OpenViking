@@ -9,6 +9,7 @@ from typing import Any, Dict, List, Optional, Union
 
 from openviking.server.identity import RequestContext, Role
 from openviking.service import OpenVikingService
+from openviking.service.search_service import session_payload_to_resolution_context
 from openviking.telemetry import TelemetryRequest
 from openviking.telemetry.execution import (
     attach_telemetry_payload,
@@ -357,6 +358,51 @@ class LocalClient(BaseClient):
             operation="search.search",
             telemetry=telemetry,
             fn=_search,
+        )
+        return attach_telemetry_payload(
+            execution.result,
+            execution.telemetry,
+        )
+
+    async def search_resolution(
+        self,
+        query: str,
+        agent_space: str = "default",
+        user_ids: Optional[List[str]] = None,
+        session_id: Optional[str] = None,
+        session_context: Optional[List[Dict[str, Any]]] = None,
+        include_debug: bool = False,
+        limits: Optional[Dict[str, int]] = None,
+        options: Optional[Dict[str, Any]] = None,
+        telemetry: TelemetryRequest = False,
+    ) -> Any:
+        """Resolve a query into a temporary Query Resolution Pack."""
+
+        async def _resolve():
+            resolved_session_context = list(session_context or [])
+            if session_id:
+                session = self._service.sessions.session(self._ctx, session_id)
+                await session.load()
+                session_payload = await session.get_session_context(token_budget=8000)
+                resolved_session_context = (
+                    session_payload_to_resolution_context(session_payload)
+                    + resolved_session_context
+                )
+            return await self._service.search.resolve(
+                query=query,
+                ctx=self._ctx,
+                agent_space=agent_space,
+                user_ids=user_ids,
+                session_context=resolved_session_context,
+                include_debug=include_debug,
+                limits=limits,
+                options=options,
+            )
+
+        execution = await run_with_telemetry(
+            operation="search.resolution",
+            telemetry=telemetry,
+            fn=_resolve,
         )
         return attach_telemetry_payload(
             execution.result,

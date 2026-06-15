@@ -1,0 +1,79 @@
+metadata:
+  id: "query_resolution.intent_and_initial_plan"
+  name: "Query Resolution Intent And Initial Plan"
+  description: "Analyze an OpenViking search-resolution query and build the initial retrieval pseudo-plan in one LLM call."
+  version: "1.0.0"
+  language: "en"
+  category: "query_resolution"
+
+variables:
+  - name: "query"
+    type: "string"
+    description: "Current user query"
+    required: true
+    max_length: 8000
+  - name: "agent_space"
+    type: "string"
+    description: "Agent space used to resolve agent-scoped OpenViking resources"
+    required: true
+  - name: "session_context_json"
+    type: "string"
+    description: "Recent session context serialized as JSON"
+    default: "[]"
+    required: false
+    max_length: 16000
+
+template: |
+  You build JSON for OpenViking query resolution.
+  Return exactly one JSON object. Use only the Query, agent_space, and session_context below.
+  Analyze the current user query for OpenViking-side retrieval and temporary Pack generation.
+  Also build a temporary initial pseudo-plan for retrieval navigation before OpenViking searches memory or skills.
+  Do not execute or solve the task. Do not write memory. Do not invent unavailable tools.
+  Use only concepts and constraints that appear in the input.
+
+  OpenViking available retrieval resources:
+  - Query Resolution Pack: the temporary output for this request. It combines selected resources into guidance for the current query only and is not persisted as memory.
+  - user_memory -> viking://user/{user_id}/memories: user profile, preferences, entities, and events. Retrieve it when the query may depend on user preferences, prior constraints, project/entity background, commitments, or recent user-specific decisions.
+  - experiences -> viking://agent/{{ agent_space }}/memories/experiences: reusable lessons, approaches, success patterns, and anti-patterns distilled from past tasks. Retrieve it when the query asks for design, implementation, review, research, troubleshooting, or any task that may benefit from previous ways of solving similar problems.
+  - tools_memory -> viking://agent/{{ agent_space }}/memories/tools: tool usage guidance, known failures, caveats, and preferred calling patterns. Retrieve it when the query likely requires tools, file/code/doc operations, search/read/write actions, or external side effects.
+  - skills -> viking://agent/{{ agent_space }}/skills and viking://agent/{{ agent_space }}/memories/skills: SKILL.md workflows, task-specific procedures, tool combinations, and skill usage notes. Retrieve it when the query names a skill, asks for a specialized workflow, or likely needs procedural guidance beyond ordinary memory.
+  - trajectory_grounding -> viking://agent/{{ agent_space }}/memories/trajectories: detailed past execution traces. Retrieve it only when experience is likely insufficient, conflicting, high-risk, or needs source evidence; do not request it for ordinary low-risk queries.
+  - requires_write and risk_level describe the user's requested task effect, not the Pack generation itself. Pack generation is read-only.
+  - needs must reflect which of the resources above should be searched for this query.
+
+  Required JSON:
+  {
+    "intent": {
+      "task_type": "query_resolution | analysis | research_and_design | design_synthesis | implementation | review",
+      "domain": "short_snake_case_domain",
+      "explicit_constraints": ["constraint from query or session context"],
+      "implicit_needs": ["context need inferred from query"],
+      "requires_tools": true,
+      "requires_write": false,
+      "risk_level": "read_only | write | high | destructive",
+      "likely_tools": ["short_tool_name"],
+      "needs": {
+        "user_memory": true,
+        "experience": true,
+        "trajectory_grounding": false,
+        "skills": true,
+        "tools_memory": true
+      }
+    },
+    "initial_pseudo_plan": [
+      {
+        "id": "p1",
+        "goal": "specific retrieval-oriented subgoal",
+        "expected_sources": ["user_memory", "experiences", "skills", "tools_memory", "skills_memory"],
+        "retrieval_hints": ["short search phrase", "another phrase"]
+      }
+    ],
+    "plan_confidence": 0.0
+  }
+
+  Context:
+  agent_space: {{ agent_space }}
+  session_context: {{ session_context_json }}
+
+  Query:
+  {{ query }}

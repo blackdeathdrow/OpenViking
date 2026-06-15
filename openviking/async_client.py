@@ -424,6 +424,32 @@ class AsyncOpenViking:
             level=level,
         )
 
+    async def search_resolution(
+        self,
+        query: str,
+        agent_space: str = "default",
+        user_ids: Optional[List[str]] = None,
+        session_id: Optional[str] = None,
+        session_context: Optional[List[Dict[str, Any]]] = None,
+        include_debug: bool = False,
+        limits: Optional[Dict[str, int]] = None,
+        options: Optional[Dict[str, Any]] = None,
+        telemetry: TelemetryRequest = False,
+    ):
+        """Resolve a query into a temporary Query Resolution Pack."""
+        await self._ensure_initialized()
+        return await self._client.search_resolution(
+            query=query,
+            agent_space=agent_space,
+            user_ids=user_ids,
+            session_id=session_id,
+            session_context=session_context,
+            include_debug=include_debug,
+            limits=limits,
+            options=options,
+            telemetry=telemetry,
+        )
+
     # ============= FS methods =============
 
     async def abstract(self, uri: str) -> str:

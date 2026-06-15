@@ -1,0 +1,65 @@
+metadata:
+  id: "query_resolution.conflict_trajectory_decision"
+  name: "Query Resolution Conflict And Trajectory Decision"
+  description: "Detect selected-context conflicts and decide whether trajectory grounding is needed."
+  version: "1.0.0"
+  language: "en"
+  category: "query_resolution"
+
+variables:
+  - name: "query"
+    type: "string"
+    description: "Current user query"
+    required: true
+    max_length: 8000
+  - name: "intent_json"
+    type: "string"
+    description: "Intent JSON"
+    required: true
+    max_length: 12000
+  - name: "selected_context_json"
+    type: "string"
+    description: "Compacted selected context JSON"
+    required: true
+    max_length: 24000
+  - name: "allow_trajectory_grounding"
+    type: "string"
+    description: "Whether trajectory grounding is allowed"
+    required: true
+
+template: |
+  You build JSON for OpenViking conflict handling and trajectory grounding.
+  Return exactly one JSON object. Use only query, intent, and selected_context summaries below.
+  Use only concepts and constraints that appear in the input.
+  Decide whether selected context has conflicts and whether additional trajectory grounding is needed.
+  Do not execute the task. Do not write memory.
+
+  Conflict policy:
+  - The current query's explicit requirements override historical memory when they conflict.
+  - Prefer directly relevant selected context over broad or weakly related context.
+  - Request trajectory grounding only when selected experiences are insufficient, context conflicts need evidence, or the task is high-risk.
+
+  Required JSON:
+  {
+    "conflicts": [
+      {
+        "items": ["current_query", "user_memory:..."],
+        "type": "short_conflict_type",
+        "resolution": "how the pack should resolve this conflict"
+      }
+    ],
+    "need_trajectory_grounding": false,
+    "reason": "short reason",
+    "grounding_queries": ["query for trajectory grounding"]
+  }
+
+  allow_trajectory_grounding: {{ allow_trajectory_grounding }}
+
+  Query:
+  {{ query }}
+
+  Intent:
+  {{ intent_json }}
+
+  Selected context summaries:
+  {{ selected_context_json }}
