@@ -204,9 +204,9 @@ class MemoryTypeSchema(BaseModel):
         "user",
         description="Extraction stage: 'user' for long-term user memory, 'agent' for execution-derived memory.",
     )
-    peer_routing: bool = Field(
+    peer_scoped: bool = Field(
         True,
-        description="Whether peer_id/ranges may route this memory type into peer directories.",
+        description="Whether this memory type is stored separately under peer directories.",
     )
     overview_template: Optional[str] = Field(
         None, description="Overview template for auto-generating .overview.md files"

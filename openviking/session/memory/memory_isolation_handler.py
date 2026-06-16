@@ -116,7 +116,7 @@ class MemoryIsolationHandler:
             item_dict["user_id"] = self.ctx.user.user_id
         item_dict.pop("user_ids", None)
 
-        if memory_type_schema is not None and not memory_type_schema.peer_routing:
+        if memory_type_schema is not None and not memory_type_schema.peer_scoped:
             item_dict.pop("peer_id", None)
             return
 
@@ -134,8 +134,8 @@ class MemoryIsolationHandler:
             return False
         return True
 
-    def _schema_peer_routing_enabled(self, memory_type_schema: MemoryTypeSchema) -> bool:
-        return bool(getattr(memory_type_schema, "peer_routing", True))
+    def _schema_peer_scoped_enabled(self, memory_type_schema: MemoryTypeSchema) -> bool:
+        return bool(getattr(memory_type_schema, "peer_scoped", True))
 
     def _can_write_peer(self, peer_id: str) -> bool:
         return self.allow_peer and peer_id in self.allowed_peer_ids
@@ -146,7 +146,7 @@ class MemoryIsolationHandler:
         user_spaces: List[str] = []
         if self.allow_self:
             user_spaces.append(user_space)
-        if self.allow_peer and self._schema_peer_routing_enabled(memory_type_schema):
+        if self.allow_peer and self._schema_peer_scoped_enabled(memory_type_schema):
             for peer_id in sorted(self.allowed_peer_ids):
                 user_spaces.append(peer_user_space(user_space, peer_id))
 
@@ -167,7 +167,7 @@ class MemoryIsolationHandler:
         try:
             msg_range = self._extract_context.read_message_ranges(str(ranges))
         except Exception:
-            logger.warning("Failed to parse memory ranges for peer routing: %s", ranges)
+            logger.warning("Failed to parse memory ranges for peer scoping: %s", ranges)
             return []
 
         target_ids = []
@@ -208,7 +208,7 @@ class MemoryIsolationHandler:
 
         target_ids: List[str] = []
         has_ranges = operation.memory_fields.get("ranges") is not None
-        if not self._schema_peer_routing_enabled(memory_type_schema):
+        if not self._schema_peer_scoped_enabled(memory_type_schema):
             operation.memory_fields.pop("peer_id", None)
             target_ids = [_SELF_PEER_ID]
         elif operation.memory_fields.get("ranges") is not None:

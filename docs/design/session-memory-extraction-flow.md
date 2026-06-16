@@ -28,9 +28,9 @@ is set, extraction is limited to those names for both self and peer writes.
 | Execution memory extraction | Execution-derived schemas, currently `trajectories`, `experiences` | Self only |
 | Session skills | `SESSION_SKILL_MEMORY_TYPE` output | Self only |
 
-Memory schemas default to `stage: user` and `peer_routing: true`. Set
+Memory schemas default to `stage: user` and `peer_scoped: true`. Set
 `stage: agent` for schemas that are extracted only by the execution-memory
-providers. Set `peer_routing: false` for user-stage schemas that should ignore
+providers. Set `peer_scoped: false` for user-stage schemas that should ignore
 `peer_id` and `ranges` peer targets and remain under the current user space
 (for example `cases`).
 
@@ -75,7 +75,7 @@ independently:
 | Unsafe `peer_id` | Skip |
 | Safe but unallowed `peer_id` | Skip |
 | `ranges` present | Read the message range; no-peer messages route to self, allowed peer messages route to peer |
-| Schema has `peer_routing: false` | Ignore `peer_id` and `ranges` peer targets; write self if self memory is enabled |
+| Schema has `peer_scoped: false` | Ignore `peer_id` and `ranges` peer targets; write self if self memory is enabled |
 | Only disabled targets found | Skip |
 
 The router does not rewrite message roles. A `role=user` message remains user

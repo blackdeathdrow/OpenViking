@@ -114,7 +114,7 @@ directory: "viking://user/{{ user_space }}/memories/..."
 enabled: true
 operation_mode: "upsert"
 stage: "user"
-peer_routing: true
+peer_scoped: true
 ```
 
 Field meanings:
@@ -139,8 +139,8 @@ Field meanings:
   - The update mode of the memory type, such as `upsert`
 - `stage`
   - Extraction stage. The default is `user`, which participates in session user-memory extraction; `agent` is reserved for execution-derived schemas such as trajectories and experiences.
-- `peer_routing`
-  - Whether `peer_id` or message ranges may route this memory type to peer directories. The default is `true`; set `false` for memories that must stay under the current user space.
+- `peer_scoped`
+  - Whether this memory type is stored separately under peer directories when `peer_id` or message ranges identify a peer. The default is `true`; set `false` for memories that must stay under the current user space.
 
 When writing a memory schema, focus on:
 

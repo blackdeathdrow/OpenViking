@@ -228,7 +228,7 @@ class MemoryTypeRegistry:
             enabled=data.get("enabled", data.get("enable", True)),
             operation_mode=data.get("operation_mode", "upsert"),
             stage=data.get("stage", "user"),
-            peer_routing=data.get("peer_routing", True),
+            peer_scoped=data.get("peer_scoped", True),
             overview_template=data.get("overview_template"),
         )
 

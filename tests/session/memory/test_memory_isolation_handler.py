@@ -153,7 +153,7 @@ class TestGetReadScope:
         assert "viking://user/support_bot/peers/__self/memories" not in dirs
         assert "viking://user/support_bot/peers/web-visitor-alice/memories" in dirs
 
-    def test_render_schema_directories_peer_routing_false_uses_self_only(self):
+    def test_render_schema_directories_peer_scoped_false_uses_self_only(self):
         from openviking.session.memory.dataclass import MemoryTypeSchema
 
         ctx = create_ctx(user_id="support_bot")
@@ -169,7 +169,7 @@ class TestGetReadScope:
             memory_type="cases",
             filename_template="{{ case_name }}.md",
             directory="viking://user/{{ user_space }}/memories/cases",
-            peer_routing=False,
+            peer_scoped=False,
         )
 
         dirs = handler.render_schema_directories(schema)
@@ -611,7 +611,7 @@ class TestCalculateMemoryUris:
 
 
     @patch("openviking.session.memory.memory_isolation_handler.generate_uri")
-    def test_peer_routing_false_forces_self_scope_and_strips_peer_id(self, mock_generate_uri):
+    def test_peer_scoped_false_forces_self_scope_and_strips_peer_id(self, mock_generate_uri):
         mock_generate_uri.side_effect = lambda **kwargs: (
             f"viking://user/{kwargs.get('user_space')}/memories/cases/demo"
         )
@@ -632,7 +632,7 @@ class TestCalculateMemoryUris:
             memory_type="cases",
             filename_template="demo.md",
             directory="viking://user/{user_space}/memories/cases",
-            peer_routing=False,
+            peer_scoped=False,
         )
         operation = ResolvedOperation(
             old_memory_file_content=None,
@@ -648,7 +648,7 @@ class TestCalculateMemoryUris:
         assert "peer_id" not in operation.memory_fields
 
     @patch("openviking.session.memory.memory_isolation_handler.generate_uri")
-    def test_peer_routing_false_uses_self_scope_even_when_self_disabled(self, mock_generate_uri):
+    def test_peer_scoped_false_uses_self_scope_even_when_self_disabled(self, mock_generate_uri):
         mock_generate_uri.side_effect = lambda **kwargs: (
             f"viking://user/{kwargs.get('user_space')}/memories/cases/demo"
         )
@@ -669,7 +669,7 @@ class TestCalculateMemoryUris:
             memory_type="cases",
             filename_template="demo.md",
             directory="viking://user/{user_space}/memories/cases",
-            peer_routing=False,
+            peer_scoped=False,
         )
         operation = ResolvedOperation(
             old_memory_file_content=None,
@@ -685,7 +685,7 @@ class TestCalculateMemoryUris:
         assert "peer_id" not in operation.memory_fields
 
     @patch("openviking.session.memory.memory_isolation_handler.generate_uri")
-    def test_peer_routing_false_ignores_ranges_peer_targets(self, mock_generate_uri):
+    def test_peer_scoped_false_ignores_ranges_peer_targets(self, mock_generate_uri):
         mock_generate_uri.side_effect = lambda **kwargs: (
             f"viking://user/{kwargs.get('user_space')}/memories/cases/demo"
         )
@@ -712,7 +712,7 @@ class TestCalculateMemoryUris:
             memory_type="cases",
             filename_template="demo.md",
             directory="viking://user/{user_space}/memories/cases",
-            peer_routing=False,
+            peer_scoped=False,
         )
         operation = ResolvedOperation(
             old_memory_file_content=None,
