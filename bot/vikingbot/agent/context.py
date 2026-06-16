@@ -226,11 +226,9 @@ Skills with available="false" need dependencies installed first - you can try in
 
         workspace_id = self._get_workspace_id(session_key)
 
-        # Automatic recall is experience-only by default. It can be enabled
-        # independently from exposing OpenViking tools to the model, so benchmark
-        # rollouts can receive recalled experience without callable openviking_*
-        # tools. User memories are not auto-recalled here; if OV tools are
-        # enabled, the agent may explicitly call openviking_search when needed.
+        # Automatic experience recall can be enabled independently from exposing
+        # OpenViking tools to the model, so benchmark rollouts can receive
+        # recalled experience without callable openviking_* tools.
         if experience_recall_enable is None:
             experience_recall_enable = ov_tools_enable
         self.latest_relevant_memories = None
@@ -251,6 +249,28 @@ Skills with available="false" need dependencies installed first - you can try in
                 parts.append(f"## Relevant Agent Experience\n{exp_memory}")
 
         if ov_tools_enable:
+            start = _time.time()
+            # Default recall runs under the configured/request OpenViking user.
+            # sender_id is passed separately as peer identity.
+            search_peer_ids = memory_peer_ids if memory_peer_ids else None
+            viking_memory = await self.memory.get_viking_memory_context(
+                current_message=current_message,
+                workspace_id=workspace_id,
+                sender_id=sender_id,
+                peer_ids=search_peer_ids,
+                user_ids=memory_owner_user_ids if memory_owner_user_ids else None,
+                openviking_connection=self._openviking_connection,
+            )
+            logger.info(f"viking_memory={viking_memory}")
+            cost = round(_time.time() - start, 2)
+            logger.info(
+                f"[READ_USER_MEMORY]: cost {cost}s, "
+                f"memory={viking_memory[:50] if viking_memory else 'None'}"
+            )
+            if viking_memory:
+                self.latest_relevant_memories = viking_memory
+                parts.append(f"## openviking_search(query=[user_query])\n{viking_memory}")
+
             parts.append(
                 "## OpenViking Memory Retrieval\n"
                 "- For questions about the user's remembered facts, preferences, profile, or personal context, use openviking_search for the current question before saying there is no relevant record.\n"

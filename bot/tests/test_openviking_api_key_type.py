@@ -1853,6 +1853,9 @@ async def test_context_reminds_agent_to_search_current_memory_question(tmp_path)
         async def get_viking_experience_context(self, **_kwargs):
             return ""
 
+        async def get_viking_memory_context(self, **_kwargs):
+            return ""
+
     context = ContextBuilder(workspace=tmp_path, sender_id="sender-1")
     context._memory = _EmptyMemory()
 
@@ -1878,8 +1881,14 @@ async def test_context_reminds_agent_to_search_current_memory_question(tmp_path)
 
 @pytest.mark.asyncio
 async def test_context_memory_prefix_tells_agent_to_read_summary_and_uri_details(tmp_path):
+    calls = []
+
     class _Memory:
-        async def get_viking_memory_context(self, **_kwargs):
+        async def get_viking_experience_context(self, **_kwargs):
+            return ""
+
+        async def get_viking_memory_context(self, **kwargs):
+            calls.append(kwargs)
             return (
                 "### user memories:\n"
                 '<memory index="1" type="summary">\n'
@@ -1896,9 +1905,21 @@ async def test_context_memory_prefix_tells_agent_to_read_summary_and_uri_details
         current_message="问题",
         sender_id="sender-1",
         ov_tools_enable=True,
-        is_first_round=False,
+        memory_peer_ids=["peer-1"],
+        memory_owner_user_ids=["owner-1"],
     )
 
+    assert calls == [
+        {
+            "current_message": "问题",
+            "workspace_id": "cli__default__chat-1",
+            "sender_id": "sender-1",
+            "peer_ids": ["peer-1"],
+            "user_ids": ["owner-1"],
+            "openviking_connection": None,
+        }
+    ]
+    assert context.latest_relevant_memories
     assert "## openviking_search(query=[user_query])" in user_info
     assert "grouped by memory_type" in user_info
     assert "full means the full memory content is already shown" in user_info
