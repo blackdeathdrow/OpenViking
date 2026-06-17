@@ -96,6 +96,13 @@ class VLMConfig(BaseModel):
         default=64, description="Maximum number of concurrent LLM calls for semantic processing"
     )
 
+    max_concurrent_dags: Optional[int] = Field(
+        default=None,
+        description="Maximum number of concurrent DAG processing tasks. "
+        "None (default) means unlimited (original behavior). "
+        "1 means sequential processing (no lock contention).",
+    )
+
     api_version: Optional[str] = Field(
         default=None,
         description="API version for Azure OpenAI (e.g., '2025-01-01-preview').",
