@@ -30,6 +30,7 @@ def init_queue_manager(
     mount_point: str = "/queue",
     max_concurrent_embedding: int = 10,
     max_concurrent_semantic: int = 64,
+    max_concurrent_dags: int = 1,
 ) -> "QueueManager":
     """Initialize QueueManager singleton.
 
@@ -38,7 +39,8 @@ def init_queue_manager(
         timeout: Request timeout in seconds.
         mount_point: Path where QueueFS is mounted.
         max_concurrent_embedding: Max concurrent embedding tasks.
-        max_concurrent_semantic: Max concurrent semantic node work.
+        max_concurrent_semantic: Max concurrent semantic LLM calls.
+        max_concurrent_dags: Max concurrent DAG processing tasks.
     """
     global _instance
     _instance = QueueManager(
@@ -47,6 +49,7 @@ def init_queue_manager(
         mount_point=mount_point,
         max_concurrent_embedding=max_concurrent_embedding,
         max_concurrent_semantic=max_concurrent_semantic,
+        max_concurrent_dags=max_concurrent_dags,
     )
     return _instance
 
@@ -75,6 +78,7 @@ class QueueManager:
         mount_point: str = "/queue",
         max_concurrent_embedding: int = 10,
         max_concurrent_semantic: int = 64,
+    max_concurrent_dags: Optional[int] = None,
     ):
         """Initialize QueueManager."""
         self._agfs = agfs
@@ -82,6 +86,7 @@ class QueueManager:
         self.mount_point = mount_point
         self._max_concurrent_embedding = max_concurrent_embedding
         self._max_concurrent_semantic = max_concurrent_semantic
+        self._max_concurrent_dags = max_concurrent_dags
         self._queues: Dict[str, NamedQueue] = {}
         self._started = False
         self._queue_threads: Dict[str, threading.Thread] = {}
@@ -131,7 +136,10 @@ class QueueManager:
         logger.info("Embedding queue initialized with TextEmbeddingHandler")
 
         # Semantic Queue
-        semantic_processor = SemanticProcessor(max_concurrent_llm=self._max_concurrent_semantic)
+        semantic_processor = SemanticProcessor(
+            max_concurrent_llm=self._max_concurrent_semantic,
+            max_concurrent_dags=self._max_concurrent_dags,
+        )
         self.get_queue(
             self.SEMANTIC,
             dequeue_handler=semantic_processor,

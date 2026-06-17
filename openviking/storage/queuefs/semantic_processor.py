@@ -101,14 +101,21 @@ class SemanticProcessor(DequeueHandlerBase):
     _request_stats_order: List[str] = []
     _max_cached_stats = 256
 
-    def __init__(self, max_concurrent_llm: int = 64):
+    def __init__(self, max_concurrent_llm: int = 64, max_concurrent_dags: Optional[int] = None):
         """
         Initialize SemanticProcessor.
 
         Args:
-            max_concurrent_llm: Maximum concurrent LLM calls
+            max_concurrent_llm: Maximum concurrent LLM calls.
+            max_concurrent_dags: Maximum concurrent DAG processing tasks.
+                None means unlimited.
         """
         self.max_concurrent_llm = max_concurrent_llm
+        self._processing_sem = (
+            asyncio.Semaphore(max_concurrent_dags)
+            if max_concurrent_dags is not None
+            else None
+        )
         self._default_ctx = RequestContext(user=UserIdentifier.the_default_user(), role=Role.ROOT)
         self._circuit_breaker = CircuitBreaker()
 
@@ -357,108 +364,114 @@ class SemanticProcessor(DequeueHandlerBase):
                 root_attrs.account_id = msg.account_id
                 root_attrs.user_id = msg.user_id
                 root_context_token = bind_root_observability_context(root_attrs)
+                if self._processing_sem is not None:
+                    await self._processing_sem.acquire()
                 try:
-                    current_ctx = self._ctx_from_semantic_msg(msg)
-                    logger.info(
-                        f"Processing semantic generation for: {msg.uri} (recursive={msg.recursive})"
-                    )
-
-                    logger.info(f"Processing semantic generation for: {msg})")
-
-                    semantic_lock = await SemanticLockScope.resolve(
-                        msg.lock_handoff,
-                        caller_lock=lock,
-                    )
-                    lock_transferred = False
                     try:
-                        if msg.context_type == "memory":
-                            lock_transferred = True
-                            await self._process_memory_directory(
-                                msg,
-                                ctx=current_ctx,
-                                lock=semantic_lock.lock,
-                            )
-                        else:
-                            is_incremental = False
-                            target_uri = msg.target_uri
-                            run_uri = msg.uri
-                            changes = msg.changes
-                            viking_fs = get_viking_fs()
-                            if msg.target_uri:
-                                target_exists = await viking_fs.exists(
-                                    msg.target_uri, ctx=current_ctx
+                        current_ctx = self._ctx_from_semantic_msg(msg)
+                        logger.info(
+                            f"Processing semantic generation for: {msg.uri} (recursive={msg.recursive})"
+                        )
+
+                        logger.info(f"Processing semantic generation for: {msg})")
+
+                        semantic_lock = await SemanticLockScope.resolve(
+                            msg.lock_handoff,
+                            caller_lock=lock,
+                        )
+                        lock_transferred = False
+                        try:
+                            if msg.context_type == "memory":
+                                lock_transferred = True
+                                await self._process_memory_directory(
+                                    msg,
+                                    ctx=current_ctx,
+                                    lock=semantic_lock.lock,
                                 )
-                                if msg.uri != msg.target_uri:
-                                    logger.info(
-                                        "Syncing semantic source into target before processing: "
-                                        f"{msg.uri} -> {msg.target_uri}"
+                            else:
+                                is_incremental = False
+                                target_uri = msg.target_uri
+                                run_uri = msg.uri
+                                changes = msg.changes
+                                viking_fs = get_viking_fs()
+                                if msg.target_uri:
+                                    target_exists = await viking_fs.exists(
+                                        msg.target_uri, ctx=current_ctx
                                     )
-                                    diff = await self._sync_topdown_recursive(
-                                        msg.uri,
-                                        msg.target_uri,
-                                        ctx=current_ctx,
-                                        lock=semantic_lock.lock,
-                                    )
-                                    logger.info(
-                                        "[SyncDiff] Diff computed: "
-                                        f"added_files={len(diff.added_files)}, "
-                                        f"deleted_files={len(diff.deleted_files)}, "
-                                        f"updated_files={len(diff.updated_files)}, "
-                                        f"added_dirs={len(diff.added_dirs)}, "
-                                        f"deleted_dirs={len(diff.deleted_dirs)}"
-                                    )
-                                    changes = diff.to_changes()
+                                    if msg.uri != msg.target_uri:
+                                        logger.info(
+                                            "Syncing semantic source into target before processing: "
+                                            f"{msg.uri} -> {msg.target_uri}"
+                                        )
+                                        diff = await self._sync_topdown_recursive(
+                                            msg.uri,
+                                            msg.target_uri,
+                                            ctx=current_ctx,
+                                            lock=semantic_lock.lock,
+                                        )
+                                        logger.info(
+                                            "[SyncDiff] Diff computed: "
+                                            f"added_files={len(diff.added_files)}, "
+                                            f"deleted_files={len(diff.deleted_files)}, "
+                                            f"updated_files={len(diff.updated_files)}, "
+                                            f"added_dirs={len(diff.added_dirs)}, "
+                                            f"deleted_dirs={len(diff.deleted_dirs)}"
+                                        )
+                                        changes = diff.to_changes()
+                                        is_incremental = True
+                                        target_uri = msg.target_uri
+                                        run_uri = msg.target_uri
+                                    elif target_exists and msg.changes and msg.uri == msg.target_uri:
+                                        is_incremental = True
+                                        logger.info(
+                                            f"Using direct incremental semantic update for: {msg.uri}"
+                                        )
+                                elif msg.changes:
                                     is_incremental = True
-                                    target_uri = msg.target_uri
-                                    run_uri = msg.target_uri
-                                elif target_exists and msg.changes and msg.uri == msg.target_uri:
-                                    is_incremental = True
+                                    target_uri = msg.uri
                                     logger.info(
                                         f"Using direct incremental semantic update for: {msg.uri}"
                                     )
-                            elif msg.changes:
-                                is_incremental = True
-                                target_uri = msg.uri
-                                logger.info(
-                                    f"Using direct incremental semantic update for: {msg.uri}"
-                                )
 
-                            executor = SemanticDagExecutor(
-                                processor=self,
-                                context_type=msg.context_type,
-                                max_concurrent_llm=self.max_concurrent_llm,
-                                ctx=current_ctx,
-                                incremental_update=is_incremental,
-                                target_uri=target_uri,
-                                semantic_msg_id=msg.id,
-                                telemetry_id=msg.telemetry_id,
-                                recursive=msg.recursive,
-                                lock=semantic_lock.lock,
-                                is_code_repo=msg.is_code_repo,
-                                changes=changes,
-                                skip_vectorization=msg.skip_vectorization,
-                                coalesce_key=msg.coalesce_key,
-                                coalesce_version=msg.coalesce_version,
-                            )
-                            lock_transferred = True
-                            await executor.run(run_uri)
-                            self._cache_dag_stats(
-                                msg.telemetry_id,
-                                run_uri,
-                                executor.get_stats(),
-                            )
-                            if not executor.stale:
-                                await self._enqueue_parent_refresh(msg, target_uri or msg.uri)
+                                executor = SemanticDagExecutor(
+                                    processor=self,
+                                    context_type=msg.context_type,
+                                    max_concurrent_llm=self.max_concurrent_llm,
+                                    ctx=current_ctx,
+                                    incremental_update=is_incremental,
+                                    target_uri=target_uri,
+                                    semantic_msg_id=msg.id,
+                                    telemetry_id=msg.telemetry_id,
+                                    recursive=msg.recursive,
+                                    lock=semantic_lock.lock,
+                                    is_code_repo=msg.is_code_repo,
+                                    changes=changes,
+                                    skip_vectorization=msg.skip_vectorization,
+                                    coalesce_key=msg.coalesce_key,
+                                    coalesce_version=msg.coalesce_version,
+                                )
+                                lock_transferred = True
+                                await executor.run(run_uri)
+                                self._cache_dag_stats(
+                                    msg.telemetry_id,
+                                    run_uri,
+                                    executor.get_stats(),
+                                )
+                                if not executor.stale:
+                                    await self._enqueue_parent_refresh(msg, target_uri or msg.uri)
+                        finally:
+                            if not lock_transferred:
+                                await semantic_lock.close()
+                        self._merge_request_stats(msg.telemetry_id, processed=1)
+                        logger.info(f"Completed semantic generation for: {msg.uri}")
+                        self.report_success()
+                        self._circuit_breaker.record_success()
+                        return None
                     finally:
-                        if not lock_transferred:
-                            await semantic_lock.close()
-                    self._merge_request_stats(msg.telemetry_id, processed=1)
-                    logger.info(f"Completed semantic generation for: {msg.uri}")
-                    self.report_success()
-                    self._circuit_breaker.record_success()
-                    return None
+                        reset_root_observability_context(root_context_token)
                 finally:
-                    reset_root_observability_context(root_context_token)
+                    if self._processing_sem is not None:
+                        self._processing_sem.release()
 
         except Exception as e:
             if isinstance(e, LockAcquisitionError):
