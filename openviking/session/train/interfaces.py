@@ -11,10 +11,10 @@ from openviking.session.memory.dataclass import MemoryFile, StoredLink
 from openviking.session.train.context import ExecutionContext
 from openviking.session.train.domain import (
     Case,
-    ExperienceSet,
     PipelineEvaluationResult,
     PipelineResult,
     PolicyApplyResult,
+    PolicySet,
     PolicyUpdatePlan,
     Rollout,
     RolloutAnalysis,
@@ -24,7 +24,7 @@ from openviking.session.train.domain import (
 
 
 class SemanticGradient(Protocol):
-    """A semantic update signal for one target Experience."""
+    """A semantic update signal for one target policy."""
 
     @property
     def before_file(self) -> MemoryFile | None: ...
@@ -33,10 +33,10 @@ class SemanticGradient(Protocol):
     def after_file(self) -> MemoryFile: ...
 
     @property
-    def target_experience_name(self) -> str: ...
+    def target_name(self) -> str: ...
 
     @property
-    def target_experience_uri(self) -> str | None: ...
+    def target_uri(self) -> str | None: ...
 
     @property
     def base_version(self) -> int | None: ...
@@ -60,18 +60,18 @@ class PolicyOptimizer(Protocol):
     async def plan(
         self,
         gradients: list[SemanticGradient],
-        policy_set: ExperienceSet,
+        policy_set: PolicySet,
         context: Any,
     ) -> PolicyUpdatePlan: ...
 
 
 class PolicyUpdater(Protocol):
-    """Applies a policy update plan to an ExperienceSet."""
+    """Applies a policy update plan to a PolicySet."""
 
     async def apply(
         self,
         plan: PolicyUpdatePlan,
-        policy_set: ExperienceSet,
+        policy_set: PolicySet,
         context: Any,
         *,
         transaction_handle: Any = None,
@@ -90,15 +90,15 @@ class RolloutExecutor(Protocol):
     async def execute(
         self,
         cases: list[Case],
-        policy_set: ExperienceSet,
+        policy_set: PolicySet,
         context: ExecutionContext,
     ) -> list[Rollout]: ...
 
 
 class PolicySnapshotter(Protocol):
-    """Creates a snapshot identifier for an ExperienceSet."""
+    """Creates a snapshot identifier for a PolicySet."""
 
-    async def snapshot(self, policy_set: ExperienceSet, context: Any) -> str: ...
+    async def snapshot(self, policy_set: PolicySet, context: Any) -> str: ...
 
 
 class RolloutAnalyzer(Protocol):
@@ -119,7 +119,7 @@ class GradientEstimator(Protocol):
     async def estimate(
         self,
         analysis: RolloutAnalysis,
-        experience_set: ExperienceSet,
+        policy_set: PolicySet,
         context: Any,
     ) -> list[SemanticGradient]: ...
 
@@ -130,7 +130,7 @@ class PolicyTrainer(Protocol):
     async def train_rollouts(
         self,
         rollouts: list[Rollout],
-        policy_set: ExperienceSet,
+        policy_set: PolicySet,
         context: Any,
         analyses: list[RolloutAnalysis] | None = None,
     ) -> RolloutTrainingResult: ...
@@ -142,20 +142,20 @@ class PolicyOptimizationPipeline(Protocol):
     async def train(
         self,
         case_loader: CaseLoader,
-        policy_set: ExperienceSet,
+        policy_set: PolicySet,
         context: Any,
     ) -> PipelineResult: ...
 
     async def eval(
         self,
         case_loader: CaseLoader,
-        policy_set: ExperienceSet,
+        policy_set: PolicySet,
         context: Any,
     ) -> PipelineEvaluationResult: ...
 
     async def train_from_rollouts(
         self,
         rollouts: list[Rollout],
-        policy_set: ExperienceSet,
+        policy_set: PolicySet,
         context: Any,
     ) -> RolloutTrainingResult: ...

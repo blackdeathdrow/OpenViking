@@ -17,10 +17,10 @@ from openviking.session.train.components.event_recorder import (
     JsonlEventRecorder,
     JsonlPipelineEventHook,
 )
-from openviking.session.train.components.rollout_artifact_recorder import RolloutArtifactRecorder
 from openviking.session.train.components.remote import RemoteCaseLoader, RemoteRolloutExecutor
 from openviking.session.train.components.report_builder import PipelineReportBuilder
 from openviking.session.train.components.reporter import emit_run_summary
+from openviking.session.train.components.rollout_artifact_recorder import RolloutArtifactRecorder
 from openviking.session.train.components.session_commit import SessionCommitPolicyTrainer
 from openviking.session.train.components.snapshotter import ContentHashPolicySnapshotter
 from openviking.session.train.context import PipelineContext
@@ -259,26 +259,20 @@ async def run_batch_train_eval(config: BatchTrainEvalConfig) -> BatchTrainEvalRe
             report_builder=report_builder,
             event_recorder=event_recorder,
         )
+        # Register rollout artifact recorder as a lifecycle hook so rollouts
+        # are written incrementally after each epoch/eval, instead of waiting
+        # for the full run to finish.
+        train_context.lifecycle_hooks = list(train_context.lifecycle_hooks) + [
+            rollout_artifact_recorder
+        ]
         train_result = await pipeline.train(
             case_loader=train_loader,
             policy_set=policy_set,
             context=train_context,
         )
         policy_set = train_result.apply_result.updated_policy_set
-        for epoch_result in train_result.epochs:
-            commit_results = list(epoch_result.apply_result.metadata.get("commit_results", []))
-            await rollout_artifact_recorder.record_train_epoch(
-                epoch=epoch_result.epoch,
-                analyses=epoch_result.analyses,
-                commit_results=commit_results,
-            )
-        for eval_result in train_result.evaluation_passes:
-            label = str(eval_result.metadata.get("rollout_stage") or "test_rollout")
-            rollout_artifact_recorder.record_eval(
-                label=label,
-                epoch=eval_result.epoch,
-                analyses=eval_result.analyses,
-            )
+        # Note: per-epoch rollout artifacts are written incrementally via the
+        # rollout_artifact_recorder lifecycle hook registered on train_context.
 
         if await test_loader.split_exists():
             final_result = await pipeline.eval(

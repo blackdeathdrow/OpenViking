@@ -12,7 +12,7 @@ from openviking.session.memory.dataclass import MemoryFile, StoredLink
 
 @dataclass(slots=True)
 class PatchSemanticGradient:
-    """Patch-based semantic gradient for one target Experience.
+    """Patch-based semantic gradient for one target policy.
 
     A semantic gradient is represented as a typed before/after memory file pair.
     The concrete patch text is a rendering concern owned by merge context
@@ -28,7 +28,7 @@ class PatchSemanticGradient:
     metadata: dict[str, Any] = field(default_factory=dict)
 
     @property
-    def target_experience_name(self) -> str:
+    def target_name(self) -> str:
         fields = self.after_file.extra_fields or {}
         memory_type = self.after_file.memory_type or fields.get("memory_type") or "experiences"
         name = (
@@ -38,9 +38,9 @@ class PatchSemanticGradient:
         )
         if name:
             return str(name)
-        uri = self.target_experience_uri
-        return uri.rstrip("/").split("/")[-1].removesuffix(".md") if uri else "unknown_experience"
+        uri = self.target_uri
+        return uri.rstrip("/").split("/")[-1].removesuffix(".md") if uri else "unknown_policy"
 
     @property
-    def target_experience_uri(self) -> str | None:
+    def target_uri(self) -> str | None:
         return self.after_file.uri or (self.before_file.uri if self.before_file is not None else None)

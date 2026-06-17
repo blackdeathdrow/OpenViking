@@ -12,7 +12,13 @@ from typing import Any
 
 from openviking.message import ToolPart
 from openviking.session.train.components.dataset_service import evaluation_to_dict, jsonable
-from openviking.session.train.domain import Rollout, RolloutAnalysis
+from openviking.session.train.components.reporter import NoopPipelineLifecycleHook
+from openviking.session.train.domain import (
+    PipelineEpochResult,
+    PipelineEvaluationResult,
+    Rollout,
+    RolloutAnalysis,
+)
 
 
 @dataclass(slots=True)
@@ -33,11 +39,14 @@ class RolloutArtifactIndex:
         }
 
 
-class RolloutArtifactRecorder:
+class RolloutArtifactRecorder(NoopPipelineLifecycleHook):
     """Write per-case/per-rollout artifacts for all case groups.
 
     Each case group and all its rollouts are written to disk so success/failure
     trials can be compared by an LLM or inspected manually.
+
+    Inherits from NoopPipelineLifecycleHook so it can be registered as a
+    pipeline lifecycle hook; only on_epoch_end and on_eval_end are overridden.
     """
 
     def __init__(
@@ -111,7 +120,53 @@ class RolloutArtifactRecorder:
             self._write_group(group_id, group_records)
             await self._write_train_commit_artifacts(group_records)
 
+    async def on_epoch_end(
+        self,
+        *,
+        epoch_result: PipelineEpochResult,
+        policy_set: Any,
+        context: Any,
+    ) -> None:
+        """Lifecycle hook: write rollout artifacts immediately after each training epoch.
+
+        This ensures rollouts are persisted incrementally instead of waiting
+        for the full pipeline to finish, which is important for long runs and
+        crash recovery.
+        """
+        commit_results = list(
+            epoch_result.apply_result.metadata.get("commit_results", []) or []
+        )
+        await self.record_train_epoch(
+            epoch=epoch_result.epoch,
+            analyses=epoch_result.analyses,
+            commit_results=commit_results,
+        )
+        # Also update the index file incrementally so it stays current.
+        self._write_index()
+
+    def on_eval_end(
+        self,
+        *,
+        evaluation_result: PipelineEvaluationResult,
+        policy_set: Any,
+        context: Any,
+    ) -> None:
+        """Lifecycle hook: write eval rollout artifacts immediately after each eval pass."""
+        label = str(
+            evaluation_result.metadata.get("rollout_stage") or "test_rollout"
+        )
+        self.record_eval(
+            label=label,
+            epoch=evaluation_result.epoch,
+            analyses=evaluation_result.analyses,
+        )
+        self._write_index()
+
     def finalize(self) -> RolloutArtifactIndex:
+        return self._write_index()
+
+    def _write_index(self) -> RolloutArtifactIndex:
+        """Write rollouts_index.json with current state (incremental update)."""
         case_groups = sorted(self._case_groups.values(), key=lambda item: item["case_group_id"])
         index = RolloutArtifactIndex(
             run_dir=str(self.run_dir),

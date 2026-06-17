@@ -82,12 +82,71 @@ def test_factory_ignores_deprecated_memory_version():
 
 @pytest.mark.asyncio
 async def test_train_from_extracted_case_memories_submits_streaming_rollout(monkeypatch):
-    submitted = []
+    submitted_gradients = []
+    submitted_analyses = []
 
     class FakeTrainer:
-        async def submit_rollout(self, rollout):
-            submitted.append(rollout)
-            return None
+        policy_set = ExperienceSet(
+            root_uri="viking://user/u/memories/experiences",
+            policies=[],
+        )
+
+        async def submit_gradients(self, gradients, *, analysis=None, rollout=None):
+            submitted_gradients.append(gradients)
+            submitted_analyses.append(analysis)
+            return RolloutTrainingResult(
+                analyses=[analysis] if analysis else [],
+                gradients=list(gradients),
+                plan=PolicyUpdatePlan(items=[], metadata={}),
+                apply_result=PolicyApplyResult(
+                    updated_policy_set=self.policy_set,
+                    written_uris=[],
+                    errors=[],
+                ),
+                metadata={},
+            )
+
+    class FakeAnalyzer:
+        async def analyze(self, rollout, context):
+            return RolloutAnalysis(
+                evaluation=RubricEvaluation(
+                    passed=True,
+                    score=1.0,
+                    criterion_results=[],
+                    feedback=[],
+                ),
+                trajectories=[
+                    Trajectory(
+                        name="duplicate_booking",
+                        uri="viking://user/u/memories/trajectories/t1.md",
+                        content="trajectory content",
+                        outcome="success",
+                        retrieval_anchor="",
+                    )
+                ],
+                gradients=[],
+            )
+
+    async def fake_estimate_exp_gradients(**kwargs):
+        # Return one dummy gradient so we can verify submission
+        from openviking.session.train import PatchSemanticGradient
+        from openviking.session.memory.dataclass import MemoryFile
+        return [
+            PatchSemanticGradient(
+                before_file=None,
+                after_file=MemoryFile(
+                    uri="viking://user/u/memories/experiences/e1.md",
+                    content="new exp",
+                    memory_type="experiences",
+                    extra_fields={"experience_name": "e1"},
+                ),
+                base_version=1,
+                rationale="test",
+                links=[],
+                confidence=0.9,
+                metadata={},
+            )
+        ]
 
     monkeypatch.setattr(
         "openviking.session.compressor_v3.get_viking_fs",
@@ -97,9 +156,14 @@ async def test_train_from_extracted_case_memories_submits_streaming_rollout(monk
         "openviking.session.compressor_v3.get_streaming_policy_trainer",
         AsyncMock(return_value=FakeTrainer()),
     )
+    monkeypatch.setattr(
+        "openviking.session.compressor_v3._estimate_exp_gradients",
+        fake_estimate_exp_gradients,
+    )
 
     compressor = SessionCompressorV3(
         vikingdb=None,
+        rollout_analyzer=FakeAnalyzer(),
         streaming_trainer_config=StreamingPolicyTrainerConfig(
             max_wait_seconds=60,
             max_gradients_per_update=8,
@@ -123,11 +187,17 @@ async def test_train_from_extracted_case_memories_submits_streaming_rollout(monk
         session_id="s1",
     )
 
-    assert result == {"case_count": 1, "submitted": 1}
-    assert len(submitted) == 1
-    assert submitted[0].case.name == "重复预订处理"
-    assert submitted[0].case.input["summary"] == "用户要求处理重复预订"
-    assert submitted[0].case.rubric.criteria[0].name == "先验证重复"
+    assert result["case_count"] == 1
+    assert result["submitted"] == 1
+    assert len(submitted_gradients) == 1
+    assert len(submitted_gradients[0]) == 1  # one exp gradient per case
+    # Verify analysis was used
+    assert submitted_analyses[0] is not None
+    assert submitted_analyses[0].trajectories[0].name == "duplicate_booking"
+    # Verify case info carried through correctly
+    assert cases[0].name == "重复预订处理"
+    assert cases[0].input["summary"] == "用户要求处理重复预订"
+    assert cases[0].rubric.criteria[0].name == "先验证重复"
 
 
 @pytest.mark.asyncio
@@ -433,9 +503,10 @@ async def test_v3_builds_training_memory_diff_from_streaming_result(monkeypatch)
     plan = PolicyUpdatePlan(
         items=[
             PolicyPlanItem(
-                kind="upsert_experience",
-                target_experience_name="booking_duplicate_handling",
-                target_experience_uri="viking://user/u/memories/experiences/booking_duplicate_handling.md",
+                kind="upsert",
+                memory_type="experiences",
+                target_name="booking_duplicate_handling",
+                target_uri="viking://user/u/memories/experiences/booking_duplicate_handling.md",
                 before_content="old exp content",
                 after_content="new exp content fallback",
             )

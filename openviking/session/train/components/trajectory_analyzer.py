@@ -14,10 +14,17 @@ from openviking.session.memory import ExtractLoop, MemoryUpdater
 from openviking.session.memory.agent_trajectory_context_provider import (
     AgentTrajectoryContextProvider,
 )
-from openviking.session.memory.dataclass import ResolvedOperations
+from openviking.session.memory.dataclass import (
+    MemoryFile,
+    ResolvedOperations,
+    StoredLink,
+)
 from openviking.session.memory.memory_isolation_handler import MemoryIsolationHandler
 from openviking.session.memory.memory_updater import ExtractContext, MemoryUpdateResult
 from openviking.session.memory.utils.memory_file_utils import MemoryFileUtils
+from openviking.session.skill.session_skill_context_provider import (
+    SESSION_SKILL_MEMORY_TYPE,
+)
 from openviking.session.train.domain import (
     CriterionResult,
     Rollout,
@@ -25,6 +32,7 @@ from openviking.session.train.domain import (
     RubricEvaluation,
     Trajectory,
 )
+from openviking.session.train.gradients import PatchSemanticGradient
 from openviking.session.train.interfaces import RolloutEvaluator
 from openviking.storage.viking_fs import get_viking_fs
 from openviking.telemetry import tracer
@@ -45,6 +53,7 @@ class TrajectoryAnalyzerContext:
     latest_archive_overview: str = ""
     evaluator_context: Any = None
     inject_evaluation_feedback: bool = True
+    include_session_skills: bool = False
 
 
 @dataclass(slots=True)
@@ -81,8 +90,10 @@ class TrajectoryRolloutAnalyzer:
             ctx=context.request_context,
             strict_extract_errors=context.strict_extract_errors,
             latest_archive_overview=context.latest_archive_overview,
+            include_session_skills=context.include_session_skills,
         )
         contexts = list((result or {}).get("contexts", []))
+        skill_gradients = list((result or {}).get("skill_gradients", []))
         trajectory_uris = [
             item.uri
             for item in contexts
@@ -98,6 +109,7 @@ class TrajectoryRolloutAnalyzer:
         return RolloutAnalysis(
             evaluation=evaluation,
             trajectories=trajectories,
+            gradients=skill_gradients,
             metadata={
                 "context_count": len(contexts),
                 "policy_snapshot_id": rollout.policy_snapshot_id,
@@ -124,9 +136,17 @@ class TrajectoryRolloutAnalyzer:
         ctx: RequestContext | None,
         strict_extract_errors: bool = False,
         latest_archive_overview: str = "",
+        include_session_skills: bool = False,
     ) -> dict[str, list[Any]]:
-        """Extract and persist trajectory memories from rollout messages."""
-        empty_result: dict[str, list[Any]] = {"contexts": []}
+        """Extract and persist trajectory memories from rollout messages.
+
+        When ``include_session_skills`` is True, session skill patches are
+        co-extracted in the same ExtractLoop pass and returned as
+        ``PatchSemanticGradient`` instances in the ``"skill_gradients"`` key.
+        Skill patches are *not* applied to disk by this method — they are
+        returned as gradient signals for downstream policy training.
+        """
+        empty_result: dict[str, list[Any]] = {"contexts": [], "skill_gradients": []}
         if not messages or ctx is None:
             return empty_result
 
@@ -134,19 +154,20 @@ class TrajectoryRolloutAnalyzer:
             messages=messages,
             latest_archive_overview=latest_archive_overview,
             include_trajectories=True,
-            include_session_skills=False,
+            include_session_skills=include_session_skills,
         )
         phase_result = await self._run_trajectory_extract_phase(
             provider=provider,
             messages=messages,
             ctx=ctx,
             strict_extract_errors=strict_extract_errors,
+            include_session_skills=include_session_skills,
         )
         if phase_result is None:
             return empty_result
 
-        _, _, contexts = phase_result
-        return {"contexts": contexts}
+        _, _, contexts, skill_gradients = phase_result
+        return {"contexts": contexts, "skill_gradients": skill_gradients}
 
     async def _run_trajectory_extract_phase(
         self,
@@ -155,7 +176,8 @@ class TrajectoryRolloutAnalyzer:
         messages: list[Message],
         ctx: RequestContext,
         strict_extract_errors: bool,
-    ) -> tuple[list[str], list[str], list[Context]] | None:
+        include_session_skills: bool = False,
+    ) -> tuple[list[str], list[str], list[Context], list[PatchSemanticGradient]] | None:
         config = get_openviking_config()
         vlm = self.vlm or config.vlm.get_vlm_instance()
         viking_fs = self.viking_fs or get_viking_fs()
@@ -163,10 +185,13 @@ class TrajectoryRolloutAnalyzer:
             raise RuntimeError("VikingFS is required to extract trajectory memories")
 
         extract_context = ExtractContext(messages)
+        allowed_types: set[str] = {_TRAJECTORY_MEMORY_TYPE}
+        if include_session_skills:
+            allowed_types.add(SESSION_SKILL_MEMORY_TYPE)
         isolation_handler = MemoryIsolationHandler(
             ctx,
             extract_context,
-            allowed_memory_types={_TRAJECTORY_MEMORY_TYPE},
+            allowed_memory_types=allowed_types,
         )
         isolation_handler.prepare_messages()
 
@@ -188,11 +213,24 @@ class TrajectoryRolloutAnalyzer:
             operations, _ = await orchestrator.run()
             if operations is None:
                 tracer.info("[trajectory] No memory operations generated")
-                return [], [], []
+                return [], [], [], []
 
             _log_operations(operations)
+
+            # Split operations into trajectory (applied to disk) and skill
+            # (returned as gradients).  Skill ops are *not* written here —
+            # they flow through the patch-merge trainer.
+            traj_ops, skill_ops = _split_operations_by_type(
+                operations, target_type=_TRAJECTORY_MEMORY_TYPE
+            )
+            skill_gradients = _skill_operations_to_gradients(
+                skill_ops,
+                viking_fs=viking_fs,
+                ctx=ctx,
+            )
+
             memory_result = await self._apply_trajectory_operations(
-                operations=operations,
+                operations=traj_ops,
                 provider=provider,
                 ctx=ctx,
                 extract_context=extract_context,
@@ -206,7 +244,12 @@ class TrajectoryRolloutAnalyzer:
                 f"errors={len(memory_result.errors)}"
             )
             contexts = _contexts_from_memory_result(memory_result)
-            return list(memory_result.written_uris), list(memory_result.edited_uris), contexts
+            return (
+                list(memory_result.written_uris),
+                list(memory_result.edited_uris),
+                contexts,
+                skill_gradients,
+            )
         except Exception as exc:
             logger.error("[trajectory] Failed to extract: %s", exc, exc_info=True)
             if strict_extract_errors:
@@ -354,3 +397,131 @@ def _evaluation_feedback_message(evaluation: RubricEvaluation) -> Message:
         role="user",
         parts=[TextPart(text="\n".join(lines))],
     )
+
+
+def _split_operations_by_type(
+    operations: ResolvedOperations, *, target_type: str
+) -> tuple[ResolvedOperations, ResolvedOperations]:
+    """Split operations into (target_type_ops, other_ops)."""
+    target_upserts = [
+        op for op in operations.upsert_operations if op.memory_type == target_type
+    ]
+    other_upserts = [
+        op for op in operations.upsert_operations if op.memory_type != target_type
+    ]
+    target_deletes = [
+        dc for dc in operations.delete_file_contents if dc.memory_type == target_type
+    ]
+    other_deletes = [
+        dc for dc in operations.delete_file_contents if dc.memory_type != target_type
+    ]
+    target_ops = ResolvedOperations(
+        upsert_operations=target_upserts,
+        delete_file_contents=target_deletes,
+        errors=list(operations.errors),
+        resolved_links=[
+            link for link in operations.resolved_links
+            if getattr(link, "from_uri", "").endswith("/trajectories/")
+            or target_type in getattr(link, "from_uri", "")
+        ],
+    )
+    other_ops = ResolvedOperations(
+        upsert_operations=other_upserts,
+        delete_file_contents=other_deletes,
+        errors=[],
+        resolved_links=[],
+    )
+    return target_ops, other_ops
+
+
+def _skill_operations_to_gradients(
+    operations: ResolvedOperations,
+    *,
+    viking_fs: Any = None,
+    ctx: Any = None,
+) -> list[PatchSemanticGradient]:
+    """Convert skill ResolvedOperations to PatchSemanticGradient instances.
+
+    The resulting gradients carry the full proposed skill content in their
+    ``after_file`` so the patch-merge optimizer can reconcile multiple
+    proposals against the current policy set.
+    """
+    gradients: list[PatchSemanticGradient] = []
+    for op in operations.upsert_operations or []:
+        if op.memory_type != SESSION_SKILL_MEMORY_TYPE:
+            continue
+        fields = dict(op.memory_fields or {})
+        skill_name = str(fields.get("skill_name") or _fallback_skill_name(op))
+        target_uri = (op.uris or [None])[0]
+        after_content = str(fields.get("content") or "")
+        if not after_content.strip():
+            continue
+
+        old_file = op.old_memory_file_content
+        after_file = MemoryFile(
+            uri=target_uri,
+            content=after_content,
+            memory_type="skills",
+            extra_fields={
+                **dict(getattr(old_file, "extra_fields", {}) or {}),
+                **{k: v for k, v in fields.items() if k != "content"},
+                "memory_type": "skills",
+                "skill_name": skill_name,
+            },
+        )
+        links: list[StoredLink] = []
+        # Build derived_from links from the source trajectory(s).
+        for link in getattr(operations, "resolved_links", []) or []:
+            try:
+                stored = link if isinstance(link, StoredLink) else StoredLink(**dict(link))
+                if stored.link_type == "derived_from" and stored.to_uri:
+                    if "/memories/trajectories/" in stored.to_uri:
+                        links.append(
+                            stored.model_copy(update={"from_uri": target_uri or ""})
+                        )
+            except Exception:
+                continue
+
+        gradients.append(
+            PatchSemanticGradient(
+                before_file=old_file,
+                after_file=after_file,
+                base_version=_base_version_from_old_file(old_file),
+                rationale=(
+                    "Session skill patch extracted from rollout trajectory "
+                    "by AgentTrajectoryContextProvider."
+                ),
+                links=links,
+                confidence=0.7,
+                metadata={
+                    "source": "trajectory_co_extract",
+                    "memory_fields": fields,
+                    "skill_name": skill_name,
+                    "uris": list(op.uris or []),
+                },
+            )
+        )
+    return gradients
+
+
+def _fallback_skill_name(op: Any) -> str:
+    uris = getattr(op, "uris", None) or []
+    if uris:
+        uri = str(uris[0])
+        # path/to/skills/my_skill/SKILL.md → my_skill
+        parts = uri.rstrip("/").split("/")
+        if len(parts) >= 2 and parts[-1] == "SKILL.md":
+            return parts[-2]
+        return parts[-1].removesuffix(".md")
+    return "unknown_skill"
+
+
+def _base_version_from_old_file(old_file: Any) -> int | None:
+    if old_file is None:
+        return None
+    fields = getattr(old_file, "extra_fields", {}) or {}
+    try:
+        v = int(fields.get("version"))
+        return v if v > 0 else None
+    except (TypeError, ValueError):
+        return None

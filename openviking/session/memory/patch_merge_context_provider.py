@@ -49,15 +49,23 @@ class PatchMergePatch:
     def target_name(self) -> str:
         fields = self.after_file.extra_fields or {}
         memory_type = self.memory_type
+        type_specific_key = f"{str(memory_type).rstrip('s')}_name"
         name = (
-            fields.get("experience_name")
+            fields.get(type_specific_key)
+            or fields.get("experience_name")  # backward compat
             or fields.get("name")
-            or fields.get(f"{memory_type.rstrip('s')}_name")
         )
         if name:
             return str(name)
         uri = self.target_uri
-        return uri.rstrip("/").split("/")[-1].removesuffix(".md") if uri else "unknown"
+        if uri:
+            # For SKILL.md-style paths, use the directory name.
+            if uri.endswith("/SKILL.md"):
+                parts = uri.rstrip("/").split("/")
+                if len(parts) >= 2:
+                    return parts[-2]
+            return uri.rstrip("/").split("/")[-1].removesuffix(".md")
+        return "unknown"
 
 
 def _resolve_patch_output_language(patches: list[PatchMergePatch]) -> str:

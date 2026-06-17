@@ -16,7 +16,7 @@ import json
 import re
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
-from typing import Any, List, Optional
+from typing import Any, Dict, List, Optional
 from uuid import uuid4
 
 from openviking.core.context import Context
@@ -42,6 +42,14 @@ from openviking.session.memory.streaming_memory_updater import (
 from openviking.session.memory.utils.json_parser import JsonUtils
 from openviking.session.memory.utils.memory_file_utils import MemoryFileUtils
 from openviking.session.memory.utils.uri import generate_uri
+from openviking.session.skill import (
+    SkillOperationUpdater,
+    dedup_session_skill_operations,
+)
+from openviking.session.skill.session_skill_context_provider import (
+    SESSION_SKILL_MEMORY_TYPE,
+    SessionSkillContextProvider,
+)
 from openviking.session.train import (
     Case,
     ExperienceGradientContext,
@@ -54,6 +62,8 @@ from openviking.session.train import (
     Rollout,
     Rubric,
     RubricCriterion,
+    SkillSetLoader,
+    SkillPolicyUpdater,
     StreamingPolicyTrainerConfig,
     TrajectoryAnalyzerContext,
     TrajectoryRolloutAnalyzer,
@@ -505,11 +515,19 @@ class SessionCompressorV3:
             tracer.info("No commit training case memories extracted; skipping streaming train")
             return {"case_count": 0, "submitted": 0}
 
+        config = get_openviking_config()
+        skill_enabled = (
+            config.memory.session_skill_extraction_enabled
+            and self.skill_processor is not None
+        )
+
         try:
             viking_fs = get_viking_fs()
-            policy_root_uri = _experience_root_uri(ctx)
-            policy_set = await ExperienceSetLoader(viking_fs=viking_fs).load(
-                policy_root_uri,
+
+            # --- Experience streaming trainer ---
+            exp_root_uri = _experience_root_uri(ctx)
+            exp_policy_set = await ExperienceSetLoader(viking_fs=viking_fs).load(
+                exp_root_uri,
                 ctx=ctx,
             )
             optimizer_context = PatchMergePolicyOptimizerContext(request_context=ctx)
@@ -518,12 +536,17 @@ class SessionCompressorV3:
                 messages=list(messages),
                 strict_extract_errors=strict_extract_errors,
             )
-            trainer = await get_streaming_policy_trainer(
+            analysis_context = TrajectoryAnalyzerContext(
+                request_context=ctx,
+                strict_extract_errors=strict_extract_errors,
+                include_session_skills=skill_enabled,
+            )
+            exp_trainer = await get_streaming_policy_trainer(
                 key=make_streaming_policy_trainer_key(
-                    policy_root_uri=policy_root_uri,
+                    policy_root_uri=exp_root_uri,
                     request_context=ctx,
                 ),
-                policy_set=policy_set,
+                policy_set=exp_policy_set,
                 rollout_analyzer=self.rollout_analyzer,
                 gradient_estimator=ExperienceGradientEstimator(
                     viking_fs=viking_fs,
@@ -532,46 +555,123 @@ class SessionCompressorV3:
                     viking_fs=viking_fs,
                     memory_type="experiences",
                 ),
-                policy_updater=MemoryFilePolicyUpdater(viking_fs=viking_fs, vikingdb=self.vikingdb),
+                policy_updater=MemoryFilePolicyUpdater(
+                    viking_fs=viking_fs, vikingdb=self.vikingdb
+                ),
                 context=PipelineContext(
-                    analysis_context=TrajectoryAnalyzerContext(
-                        request_context=ctx,
-                        strict_extract_errors=strict_extract_errors,
-                    ),
+                    analysis_context=analysis_context,
                     gradient_context=gradient_context,
                     optimization_context=optimizer_context,
                     apply_context=ctx,
                 ),
                 config=self.streaming_trainer_config,
             )
+
+            # --- Skill streaming trainer ---
+            skill_trainer = None
+            if skill_enabled:
+                skill_root_uri = _skill_root_uri(ctx)
+                skill_policy_set = await SkillSetLoader(viking_fs=viking_fs).load(
+                    skill_root_uri,
+                    ctx=ctx,
+                )
+                skill_trainer = await get_streaming_policy_trainer(
+                    key=_skill_trainer_key(ctx),
+                    policy_set=skill_policy_set,
+                    rollout_analyzer=self.rollout_analyzer,
+                    gradient_estimator=_NoopGradientEstimator(),
+                    policy_optimizer=PatchMergePolicyOptimizer(
+                        viking_fs=viking_fs,
+                        memory_type="skills",
+                    ),
+                    policy_updater=SkillPolicyUpdater(
+                        skill_processor=self.skill_processor,
+                        viking_fs=viking_fs,
+                        vikingdb=self.vikingdb,
+                        memory_type="skills",
+                    ),
+                    context=PipelineContext(
+                        analysis_context=analysis_context,
+                        gradient_context=gradient_context,
+                        optimization_context=optimizer_context,
+                        apply_context=ctx,
+                    ),
+                    config=self.streaming_trainer_config,
+                )
+
             submitted = 0
+            skill_submitted = 0
             memory_diffs: list[dict[str, Any]] = []
+            policy_snapshot_id = _commit_policy_snapshot_id(
+                session_id=session_id,
+                archive_uri=archive_uri,
+            )
+
             for case in cases:
                 rollout = Rollout(
                     case=case,
                     messages=list(messages),
-                    policy_snapshot_id=_commit_policy_snapshot_id(
-                        session_id=session_id,
-                        archive_uri=archive_uri,
-                    ),
+                    policy_snapshot_id=policy_snapshot_id,
                 )
-                training_result = await trainer.submit_rollout(rollout)
-                submitted += 1
-                if collect_memory_diff:
-                    memory_diff = await self._build_training_memory_diff(
-                        training_result=training_result,
-                        viking_fs=viking_fs,
-                        ctx=ctx,
-                        archive_uri=archive_uri,
+                # Analyze once — trajectories + skill patches co-extracted
+                analysis = await self.rollout_analyzer.analyze(
+                    rollout, analysis_context
+                )
+
+                # Experience path: estimate gradients, then submit to exp trainer
+                exp_gradients = await _estimate_exp_gradients(
+                    analysis=analysis,
+                    policy_set=exp_trainer.policy_set,
+                    context=gradient_context,
+                    viking_fs=viking_fs,
+                )
+                if exp_gradients:
+                    await exp_trainer.submit_gradients(
+                        exp_gradients,
+                        analysis=analysis,
+                        rollout=rollout,
                     )
-                    if _memory_diff_has_changes(memory_diff):
-                        memory_diffs.append(memory_diff)
+
+                # Skill path: co-extracted skill gradients go directly to skill trainer
+                if skill_trainer is not None and analysis.gradients:
+                    skill_gradients = [
+                        g for g in analysis.gradients
+                        if _gradient_memory_type(g) == "skills"
+                    ]
+                    if skill_gradients:
+                        await skill_trainer.submit_gradients(
+                            skill_gradients,
+                            analysis=analysis,
+                            rollout=rollout,
+                        )
+                        skill_submitted += 1
+
+                submitted += 1
+
+                if collect_memory_diff:
+                    # Build diff from exp trainer result (skill diffs not yet supported)
+                    last_result = getattr(exp_trainer, "last_apply_result", None)
+                    if last_result is not None:
+                        memory_diff = await self._build_training_memory_diff(
+                            training_result=last_result,
+                            viking_fs=viking_fs,
+                            ctx=ctx,
+                            archive_uri=archive_uri,
+                        )
+                        if _memory_diff_has_changes(memory_diff):
+                            memory_diffs.append(memory_diff)
+
             tracer.info(
                 "Submitted commit case memories to streaming train: "
-                f"case_count={len(cases)} submitted={submitted}",
+                f"case_count={len(cases)} submitted={submitted} "
+                f"skill_submitted={skill_submitted}",
                 console=self.streaming_trainer_config.trace_console,
             )
-            response: dict[str, Any] = {"case_count": len(cases), "submitted": submitted}
+            response: dict[str, Any] = {
+                "case_count": len(cases),
+                "submitted": submitted,
+                "skill_submitted": skill_submitted,
+            }
             if collect_memory_diff:
                 response["memory_diff"] = _merge_memory_diffs(
                     memory_diffs,
@@ -619,10 +719,13 @@ class SessionCompressorV3:
         root_uri = str(getattr(policy_set, "root_uri", "") or _experience_root_uri(ctx))
 
         for item in getattr(plan, "items", []) or []:
+            item_memory_type = getattr(item, "memory_type", None) or "experiences"
+            if item_memory_type != "experiences":
+                continue
             uri = _experience_plan_item_uri(item, root_uri)
             if not uri:
                 continue
-            if getattr(item, "kind", None) == "delete_experience":
+            if getattr(item, "kind", None) == "delete":
                 if uri in deleted_uris:
                     deletes.append(
                         {
@@ -632,7 +735,7 @@ class SessionCompressorV3:
                         }
                     )
                 continue
-            if getattr(item, "kind", None) != "upsert_experience" or uri not in applied_uris:
+            if getattr(item, "kind", None) != "upsert" or uri not in applied_uris:
                 continue
             after = await _read_plain_memory_content(
                 viking_fs,
@@ -984,6 +1087,76 @@ def _experience_root_uri(ctx: RequestContext) -> str:
     return f"viking://user/{user_space}/memories/experiences"
 
 
+def _skill_root_uri(ctx: RequestContext) -> str:
+    user_space = getattr(getattr(ctx, "user", None), "user_id", None) or "default"
+    return f"viking://user/{user_space}/skills"
+
+
+def _skill_trainer_key(ctx: RequestContext) -> tuple[str, str, str]:
+    """Registry key for the skill streaming trainer (separate from exp trainer)."""
+    from openviking.session.train.components.policy_trainer import (
+        make_streaming_policy_trainer_key,
+    )
+    return make_streaming_policy_trainer_key(
+        policy_root_uri=_skill_root_uri(ctx),
+        request_context=ctx,
+    )
+
+
+@dataclass(slots=True)
+class _NoopGradientEstimator:
+    """GradientEstimator that returns empty gradients.
+
+    Used for the skill trainer because skill gradients are co-extracted
+    during trajectory analysis and submitted directly via
+    ``submit_gradients``; the estimator is never called in practice but
+    ``StreamingPolicyTrainer`` requires one.
+    """
+
+    async def estimate(
+        self,
+        analysis: Any,
+        policy_set: Any,
+        context: Any = None,
+    ) -> list[Any]:
+        return []
+
+
+async def _estimate_exp_gradients(
+    *,
+    analysis: RolloutAnalysis,
+    policy_set: Any,
+    context: ExperienceGradientContext,
+    viking_fs: Any = None,
+) -> list[Any]:
+    """Estimate experience gradients from a rollout analysis.
+
+    Thin wrapper around ExperienceGradientEstimator that reuses the
+    trajectory content from the analysis instead of running a full
+    second extraction pass.
+    """
+    estimator = ExperienceGradientEstimator(viking_fs=viking_fs)
+    return await estimator.estimate(analysis, policy_set, context)
+
+
+def _gradient_memory_type(gradient: Any) -> str:
+    """Extract memory_type from a semantic gradient."""
+    after_file = getattr(gradient, "after_file", None)
+    if after_file is not None:
+        mt = getattr(after_file, "memory_type", None)
+        if mt:
+            return str(mt)
+    metadata = dict(getattr(gradient, "metadata", {}) or {})
+    if metadata.get("memory_type"):
+        return str(metadata["memory_type"])
+    before_file = getattr(gradient, "before_file", None)
+    if before_file is not None:
+        mt = getattr(before_file, "memory_type", None)
+        if mt:
+            return str(mt)
+    return "experiences"
+
+
 def _dict_value(data: Any, key: str) -> Any:
     if isinstance(data, dict):
         return data.get(key)
@@ -1085,10 +1258,10 @@ async def _read_plain_memory_content(
 
 
 def _experience_plan_item_uri(item: Any, root_uri: str) -> str:
-    uri = str(getattr(item, "target_experience_uri", "") or "")
+    uri = str(getattr(item, "target_uri", "") or "")
     if uri:
         return uri
-    name = str(getattr(item, "target_experience_name", "") or "new_experience")
+    name = str(getattr(item, "target_name", "") or "new_experience")
     return f"{root_uri.rstrip('/')}/{_safe_experience_filename(name)}.md"
 
 

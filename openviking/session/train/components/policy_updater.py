@@ -18,10 +18,10 @@ from openviking.session.memory.dataclass import (
 from openviking.session.memory.memory_type_registry import create_default_registry
 from openviking.session.memory.memory_updater import MemoryUpdater
 from openviking.session.train.domain import (
-    Experience,
-    ExperienceSet,
+    Policy,
     PolicyApplyResult,
     PolicyPlanItem,
+    PolicySet,
     PolicyUpdatePlan,
 )
 from openviking.storage.viking_fs import get_viking_fs
@@ -45,13 +45,13 @@ class DryRunPolicyUpdater:
     async def apply(
         self,
         plan: PolicyUpdatePlan,
-        policy_set: ExperienceSet,
+        policy_set: PolicySet,
         context: Any = None,
         *,
         transaction_handle: Any = None,
     ) -> PolicyApplyResult:
-        del context
         del transaction_handle
+        del context
         updated_policy_set = (
             _apply_items_to_snapshot(plan.items, policy_set)
             if self.simulate and plan.items
@@ -71,12 +71,12 @@ class DryRunPolicyUpdater:
 
 @dataclass(slots=True)
 class MemoryFilePolicyUpdater:
-    """PolicyUpdater that writes experience files via VikingFS.
+    """PolicyUpdater that writes policy files via VikingFS.
 
-    It consumes executable ``upsert_experience`` and ``delete_experience`` plan
-    items. The updater performs a lightweight base-content guard when
-    ``before_content`` is available to avoid blindly overwriting or deleting a
-    diverged ExperienceSet snapshot.
+    It consumes executable ``upsert`` and ``delete`` plan items. The updater
+    performs a lightweight base-content guard when ``before_content`` is
+    available to avoid blindly overwriting or deleting a diverged policy set
+    snapshot.
     """
 
     viking_fs: Any = None
@@ -86,7 +86,7 @@ class MemoryFilePolicyUpdater:
     async def apply(
         self,
         plan: PolicyUpdatePlan,
-        policy_set: ExperienceSet,
+        policy_set: PolicySet,
         context: Any = None,
         *,
         transaction_handle: Any = None,
@@ -131,17 +131,17 @@ class MemoryFilePolicyUpdater:
 
 
 def _apply_items_to_snapshot(
-    items: list[PolicyPlanItem], policy_set: ExperienceSet
-) -> ExperienceSet:
+    items: list[PolicyPlanItem], policy_set: PolicySet
+) -> PolicySet:
     policies_by_uri = {policy.uri: policy for policy in policy_set.policies}
     result = list(policy_set.policies)
 
     for item in items:
         uri = _target_uri(item, policy_set.root_uri)
 
-        if item.kind == "delete_experience":
+        if item.kind == "delete":
             existing = policies_by_uri.get(uri) or _find_policy(
-                ExperienceSet(
+                PolicySet(
                     policy_set.root_uri,
                     result,
                     metadata=dict(policy_set.metadata),
@@ -149,22 +149,22 @@ def _apply_items_to_snapshot(
                     request_context=policy_set.request_context,
                 ),
                 uri=None,
-                name=item.target_experience_name,
+                name=item.target_name,
             )
             remove_uri = existing.uri if existing is not None else uri
             result = [
                 policy
                 for policy in result
-                if policy.uri != remove_uri and policy.name != item.target_experience_name
+                if policy.uri != remove_uri and policy.name != item.target_name
             ]
             policies_by_uri.pop(remove_uri, None)
             policies_by_uri.pop(uri, None)
             continue
 
-        if item.kind != "upsert_experience" or item.after_content is None:
+        if item.kind != "upsert" or item.after_content is None:
             continue
         existing = policies_by_uri.get(uri) or _find_policy(
-            ExperienceSet(
+            PolicySet(
                 policy_set.root_uri,
                 result,
                 metadata=dict(policy_set.metadata),
@@ -172,15 +172,15 @@ def _apply_items_to_snapshot(
                 request_context=policy_set.request_context,
             ),
             uri=None,
-            name=item.target_experience_name,
+            name=item.target_name,
         )
         metadata = dict(existing.metadata) if existing is not None else {}
         metadata.update(item.metadata.get("patch_metadata", {}))
-        metadata.setdefault("memory_type", "experiences")
-        metadata["experience_name"] = item.target_experience_name
+        metadata.setdefault("memory_type", item.memory_type or "experiences")
+        metadata["experience_name"] = item.target_name
         version = (existing.version + 1) if existing is not None else 1
-        updated = Experience(
-            name=item.target_experience_name,
+        updated = Policy(
+            name=item.target_name,
             uri=uri,
             version=version,
             status=(existing.status if existing is not None else "draft"),
@@ -196,7 +196,7 @@ def _apply_items_to_snapshot(
         policies_by_uri[uri] = updated
 
     result.sort(key=lambda policy: policy.uri)
-    return ExperienceSet(
+    return PolicySet(
         root_uri=policy_set.root_uri,
         policies=result,
         metadata=dict(policy_set.metadata),
@@ -206,11 +206,11 @@ def _apply_items_to_snapshot(
 
 
 def _find_policy(
-    policy_set: ExperienceSet,
+    policy_set: PolicySet,
     *,
     uri: str | None,
     name: str,
-) -> Experience | None:
+) -> Policy | None:
     for policy in policy_set.policies:
         if uri and policy.uri == uri:
             return policy
@@ -220,17 +220,17 @@ def _find_policy(
 
 
 def _target_uri(item: PolicyPlanItem, root_uri: str) -> str:
-    if item.target_experience_uri:
-        return item.target_experience_uri
-    return f"{root_uri.rstrip('/')}/{_safe_experience_filename(item.target_experience_name)}.md"
+    if item.target_uri:
+        return item.target_uri
+    return f"{root_uri.rstrip('/')}/{_safe_experience_filename(item.target_name)}.md"
 
 
 
 def _plan_to_resolved_operations(
     *,
     plan: PolicyUpdatePlan,
-    policy_set: ExperienceSet,
-    updated_policy_set: ExperienceSet,
+    policy_set: PolicySet,
+    updated_policy_set: PolicySet,
 ) -> tuple[ResolvedOperations, list[str]]:
     upserts: list[ResolvedOperation] = []
     deletes: list[MemoryFile] = []
@@ -239,7 +239,7 @@ def _plan_to_resolved_operations(
 
     for item in plan.items:
         uri = _target_uri(item, policy_set.root_uri)
-        current = _find_policy(policy_set, uri=uri, name=item.target_experience_name)
+        current = _find_policy(policy_set, uri=uri, name=item.target_name)
         if (
             current is not None
             and item.before_content is not None
@@ -248,40 +248,40 @@ def _plan_to_resolved_operations(
         ):
             errors.append(
                 "base content mismatch for "
-                f"{item.target_experience_name}: expected gradient before_content"
+                f"{item.target_name}: expected gradient before_content"
             )
             continue
 
-        if item.kind == "delete_experience":
+        if item.kind == "delete":
             deletes.append(_policy_or_plan_item_memory_file(item, uri=uri, current=current))
             continue
 
-        if item.kind != "upsert_experience":
+        if item.kind != "upsert":
             continue
         if item.after_content is None:
-            errors.append(f"missing after_content for {item.target_experience_name}")
+            errors.append(f"missing after_content for {item.target_name}")
             continue
 
-        updated = _find_policy(updated_policy_set, uri=uri, name=item.target_experience_name)
+        updated = _find_policy(updated_policy_set, uri=uri, name=item.target_name)
         if updated is None:
             errors.append(
-                f"planned policy not found after simulation: {item.target_experience_name}"
+                f"planned policy not found after simulation: {item.target_name}"
             )
             continue
 
         upserts.append(
             ResolvedOperation(
-                old_memory_file_content=_experience_to_memory_file(current)
+                old_memory_file_content=_policy_to_memory_file(current)
                 if current is not None
                 else None,
                 memory_fields={
                     **dict(updated.metadata),
-                    "memory_type": "experiences",
+                    "memory_type": item.memory_type or "experiences",
                     "experience_name": updated.name,
                     "content": updated.content,
                     "status": updated.status,
                 },
-                memory_type="experiences",
+                memory_type=item.memory_type or "experiences",
                 uris=[uri],
             )
         )
@@ -302,37 +302,37 @@ def _policy_or_plan_item_memory_file(
     item: PolicyPlanItem,
     *,
     uri: str,
-    current: Experience | None,
+    current: Policy | None,
 ) -> MemoryFile:
     if current is not None:
-        return _experience_to_memory_file(current)
+        return _policy_to_memory_file(current)
     return MemoryFile(
         uri=uri,
         content=item.before_content or "",
-        memory_type="experiences",
+        memory_type=item.memory_type or "experiences",
         extra_fields={
-            "memory_type": "experiences",
-            "experience_name": item.target_experience_name,
+            "memory_type": item.memory_type or "experiences",
+            "experience_name": item.target_name,
             **({"version": item.base_version} if item.base_version is not None else {}),
         },
     )
 
 
-def _experience_to_memory_file(experience: Experience | None) -> MemoryFile | None:
-    if experience is None:
+def _policy_to_memory_file(policy: Policy | None) -> MemoryFile | None:
+    if policy is None:
         return None
     return MemoryFile(
-        uri=experience.uri,
-        content=experience.content,
-        links=list(experience.links or []),
-        backlinks=list(experience.backlinks or []),
+        uri=policy.uri,
+        content=policy.content,
+        links=list(policy.links or []),
+        backlinks=list(policy.backlinks or []),
         memory_type="experiences",
         extra_fields={
-            **dict(experience.metadata),
+            **dict(policy.metadata),
             "memory_type": "experiences",
-            "experience_name": experience.name,
-            "version": experience.version,
-            "status": experience.status,
+            "experience_name": policy.name,
+            "version": policy.version,
+            "status": policy.status,
         },
     )
 

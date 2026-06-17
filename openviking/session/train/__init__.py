@@ -25,7 +25,7 @@ from openviking.session.train.components.gradient_estimator import (
     ExperienceGradientContext,
     ExperienceGradientEstimator,
 )
-from openviking.session.train.components.memory_store import ExperienceSetLoader
+from openviking.session.train.components.memory_store import ExperienceSetLoader, SkillSetLoader
 from openviking.session.train.components.policy_optimizer import (
     PatchMergePolicyOptimizer,
     PatchMergePolicyOptimizerContext,
@@ -57,6 +57,7 @@ from openviking.session.train.components.report_builder import (
     PipelineReportHook,
 )
 from openviking.session.train.components.session_commit import SessionCommitPolicyTrainer
+from openviking.session.train.components.skill_policy_updater import SkillPolicyUpdater
 from openviking.session.train.components.snapshotter import ContentHashPolicySnapshotter
 from openviking.session.train.components.trajectory_analyzer import (
     TrajectoryAnalyzerContext,
@@ -135,6 +136,8 @@ __all__ = [
     "emit_run_summary",
     "SessionCommitPolicyTrainer",
     "ExperienceSetLoader",
+    "SkillSetLoader",
+    "SkillPolicyUpdater",
     "DryRunPolicyUpdater",
     "MemoryFilePolicyUpdater",
     "SingleTurnLLMRolloutExecutor",

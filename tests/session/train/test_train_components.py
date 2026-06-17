@@ -149,9 +149,10 @@ def _plan_item_from_gradient(gradient: PatchSemanticGradient):
     from openviking.session.train import PolicyPlanItem
 
     return PolicyPlanItem(
-        kind="upsert_experience",
-        target_experience_name=gradient.target_experience_name,
-        target_experience_uri=gradient.target_experience_uri,
+        kind="upsert",
+        memory_type="experiences",
+        target_name=gradient.target_name,
+        target_uri=gradient.target_uri,
         before_content=(
             gradient.before_file.plain_content() if gradient.before_file is not None else None
         ),
@@ -169,9 +170,10 @@ def _delete_plan(*, uri: str, before_content: str = "content") -> PolicyUpdatePl
     return PolicyUpdatePlan(
         items=[
             PolicyPlanItem(
-                kind="delete_experience",
-                target_experience_name="booking_duplicate_handling",
-                target_experience_uri=uri,
+                kind="delete",
+                memory_type="experiences",
+                target_name="booking_duplicate_handling",
+                target_uri=uri,
                 before_content=before_content,
                 after_content=None,
                 base_version=1,
@@ -486,8 +488,8 @@ async def test_patch_merge_policy_optimizer_runs_patch_merge_extract_loop(monkey
     )
 
     assert plan.metadata["optimizer"] == "patch_merge"
-    assert plan.items[0].kind == "upsert_experience"
-    assert plan.items[0].target_experience_uri == policy_set.policies[0].uri
+    assert plan.items[0].kind == "upsert"
+    assert plan.items[0].target_uri == policy_set.policies[0].uri
     assert plan.items[0].before_content == "content"
     assert plan.items[0].after_content == "merged content"
     assert [link.to_uri for link in plan.items[0].links] == [
@@ -594,7 +596,7 @@ async def test_patch_merge_policy_optimizer_merges_all_patch_gradients_once(monk
     assert plan.metadata["optimizer"] == "patch_merge"
     assert plan.metadata["patch_gradient_count"] == 2
     assert len(plan.items) == 1
-    assert plan.items[0].target_experience_name == "重复预订处理"
+    assert plan.items[0].target_name == "重复预订处理"
     assert [link.to_uri for link in plan.items[0].links] == [
         "viking://user/u/memories/trajectories/traj1.md",
         "viking://user/u/memories/trajectories/traj2.md",

@@ -18,8 +18,8 @@ from openviking.session.memory.patch_merge_context_provider import (
     PatchMergePatch,
 )
 from openviking.session.train.domain import (
-    Experience,
-    ExperienceSet,
+    Policy,
+    PolicySet,
     PolicyPlanItem,
     PolicyUpdatePlan,
 )
@@ -55,7 +55,7 @@ class PatchMergePolicyOptimizer:
     async def plan(
         self,
         gradients: list[SemanticGradient],
-        policy_set: ExperienceSet,
+        policy_set: PolicySet,
         context: PatchMergePolicyOptimizerContext | None = None,
     ) -> PolicyUpdatePlan:
         if context is None:
@@ -114,7 +114,7 @@ class PatchMergePolicyOptimizer:
         self,
         *,
         gradients: list[SemanticGradient],
-        policy_set: ExperienceSet,
+        policy_set: PolicySet,
         context: PatchMergePolicyOptimizerContext,
     ):
         config = get_openviking_config()
@@ -191,8 +191,8 @@ def _log_merge_input(
             [
                 "",
                 f"[Gradient {idx}]",
-                f"target_experience_name: {gradient.target_experience_name}",
-                f"target_experience_uri: {gradient.target_experience_uri}",
+                f"target_name: {gradient.target_name}",
+                f"target_uri: {gradient.target_uri}",
                 f"base_version: {gradient.base_version}",
                 f"confidence: {gradient.confidence}",
                 f"links: {_links_to_dicts(gradient.links)}",
@@ -236,8 +236,9 @@ def _log_merge_output(
             [
                 f"--- item {idx} ---",
                 f"kind: {item.kind}",
-                f"target_experience_name: {item.target_experience_name}",
-                f"target_experience_uri: {item.target_experience_uri}",
+                f"memory_type: {item.memory_type}",
+                f"target_name: {item.target_name}",
+                f"target_uri: {item.target_uri}",
                 f"base_version: {item.base_version}",
                 f"confidence: {item.confidence}",
                 f"links: {_links_to_dicts(item.links)}",
@@ -277,8 +278,8 @@ def _memory_file_summary(file: MemoryFile | None) -> str:
 def _gradient_to_dict(index: int, gradient: SemanticGradient) -> dict[str, Any]:
     result = {
         "index": index,
-        "target_experience_name": gradient.target_experience_name,
-        "target_experience_uri": gradient.target_experience_uri,
+        "target_name": gradient.target_name,
+        "target_uri": gradient.target_uri,
         "base_version": gradient.base_version,
         "rationale": gradient.rationale,
         "links": _links_to_dicts(gradient.links),
@@ -333,11 +334,11 @@ def _compact_gradient_metadata(metadata: dict[str, Any]) -> dict[str, Any]:
 
 def _required_file_uris(
     gradients: list[SemanticGradient],
-    policy_set: ExperienceSet,
+    policy_set: PolicySet,
 ) -> list[str]:
     uris: list[str] = []
     for gradient in gradients:
-        uri = gradient.target_experience_uri
+        uri = gradient.target_uri
         if not uri:
             superseded = _find_superseded_policy(_gradient_supersedes(gradient), policy_set)
             uri = superseded.uri if superseded is not None else None
@@ -348,47 +349,58 @@ def _required_file_uris(
 def _seed_read_file_contents(
     provider: PatchMergeContextProvider,
     gradients: list[SemanticGradient],
-    policy_set: ExperienceSet,
+    policy_set: PolicySet,
 ) -> None:
     for policy in policy_set.policies:
         if policy.uri in provider.required_file_uris:
-            provider.read_file_contents[policy.uri] = _experience_to_memory_file(policy)
+            provider.read_file_contents[policy.uri] = _policy_to_memory_file(
+                policy, memory_type=provider.memory_type
+            )
     for gradient in gradients:
         before_file = gradient.before_file
-        target_uri = gradient.target_experience_uri
+        target_uri = gradient.target_uri
         if before_file is None or target_uri in provider.read_file_contents:
             continue
         if target_uri:
             provider.read_file_contents[target_uri] = before_file
 
-def _experience_to_memory_file(experience: Experience) -> MemoryFile:
+
+def _policy_to_memory_file(policy: Policy, *, memory_type: str = "experiences") -> MemoryFile:
+    name_field = _name_field_for_memory_type(memory_type)
+    extra_fields = dict(policy.metadata)
+    extra_fields["memory_type"] = memory_type
+    extra_fields[name_field] = policy.name
+    extra_fields.setdefault("version", policy.version)
+    extra_fields.setdefault("status", policy.status)
     return MemoryFile(
-        uri=experience.uri,
-        content=experience.content,
-        links=list(experience.links or []),
-        backlinks=list(experience.backlinks or []),
-        memory_type="experiences",
-        extra_fields={
-            **dict(experience.metadata),
-            "memory_type": "experiences",
-            "experience_name": experience.name,
-            "version": experience.version,
-            "status": experience.status,
-        },
+        uri=policy.uri,
+        content=policy.content,
+        links=list(policy.links or []),
+        backlinks=list(policy.backlinks or []),
+        memory_type=memory_type,
+        extra_fields=extra_fields,
     )
 
 def _operations_to_plan_items(
     *,
     operations: Any,
     gradients: list[SemanticGradient],
-    policy_set: ExperienceSet,
+    policy_set: PolicySet,
     memory_type: str,
 ) -> list[PolicyPlanItem]:
     items: list[PolicyPlanItem] = []
-    links = _merge_gradient_links(gradients)
+    gradient_links = _merge_gradient_links(gradients)
+    superseded_policies = _superseded_policies_for_gradients(gradients, policy_set)
+    superseded_links = [
+        link
+        for policy in superseded_policies
+        for link in _source_trajectory_links_from_experience(policy)
+    ]
     confidence_values = [float(gradient.confidence) for gradient in gradients]
     confidence = max(confidence_values) if confidence_values else None
+    name_field = _name_field_for_memory_type(memory_type)
 
+    upsert_target_uris: set[str] = set()
     for op in getattr(operations, "upsert_operations", []) or []:
         if getattr(op, "memory_type", None) != memory_type:
             continue
@@ -396,7 +408,11 @@ def _operations_to_plan_items(
         after_content = str(fields.get("content") or "")
         if not after_content.strip():
             continue
-        target_name = str(fields.get("experience_name") or _fallback_experience_name(op))
+        target_name = str(
+            fields.get(name_field)
+            or fields.get("name")
+            or _fallback_policy_name(op, memory_type=memory_type)
+        )
         target_uri = _first_uri(getattr(op, "uris", []) or [])
         old_file = getattr(op, "old_memory_file_content", None)
         before_content = old_file.plain_content() if old_file is not None else None
@@ -405,9 +421,10 @@ def _operations_to_plan_items(
             before_content = policy.content if policy is not None else None
         items.append(
             PolicyPlanItem(
-                kind="upsert_experience",
-                target_experience_name=target_name,
-                target_experience_uri=target_uri,
+                kind="upsert",
+                memory_type=memory_type,
+                target_name=target_name,
+                target_uri=target_uri,
                 before_content=before_content,
                 after_content=after_content,
                 base_version=_base_version_from_old_file_or_policy(
@@ -416,37 +433,161 @@ def _operations_to_plan_items(
                     policy_set,
                 ),
                 confidence=confidence,
-                links=_remap_links_from_uri(links, target_uri or ""),
+                links=_merge_source_trajectory_links(
+                    _remap_source_trajectory_links(
+                        [*gradient_links, *superseded_links],
+                        target_uri=target_uri or "",
+                    )
+                ),
                 metadata={
                     "rationale": "PatchMergeContextProvider merged semantic gradients via ExtractLoop.",
                     "merge_gradient_count": len(gradients),
                     "merge_memory_fields": fields,
+                    "superseded_experience_uris": [
+                        policy.uri for policy in superseded_policies
+                    ],
                 },
             )
         )
+        if target_uri:
+            upsert_target_uris.add(target_uri)
 
+    delete_uris: set[str] = set()
     for old_file in getattr(operations, "delete_file_contents", []) or []:
         target_uri = old_file.uri
         target_name = str(
-            (old_file.extra_fields or {}).get("experience_name")
+            (old_file.extra_fields or {}).get(name_field)
             or (target_uri.rstrip("/").split("/")[-1].removesuffix(".md") if target_uri else "")
         )
+        if not target_uri or target_uri in upsert_target_uris:
+            continue
         items.append(
             PolicyPlanItem(
-                kind="delete_experience",
-                target_experience_name=target_name,
-                target_experience_uri=target_uri,
+                kind="delete",
+                memory_type=memory_type,
+                target_name=target_name,
+                target_uri=target_uri,
                 before_content=old_file.plain_content(),
                 after_content=None,
                 confidence=confidence,
-                links=_remap_links_from_uri(links, target_uri or ""),
+                links=_remap_source_trajectory_links(gradient_links, target_uri=target_uri),
                 metadata={
                     "rationale": "PatchMergeContextProvider merge requested memory deletion.",
                     "merge_gradient_count": len(gradients),
                 },
             )
         )
+        delete_uris.add(target_uri)
+
+    for policy in superseded_policies:
+        if policy.uri in upsert_target_uris or policy.uri in delete_uris:
+            continue
+        items.append(
+            PolicyPlanItem(
+                kind="delete",
+                memory_type=memory_type,
+                target_name=policy.name,
+                target_uri=policy.uri,
+                before_content=policy.content,
+                after_content=None,
+                base_version=policy.version,
+                confidence=confidence,
+                links=_source_trajectory_links_from_experience(policy),
+                metadata={
+                    "rationale": "Superseded by broader experience from semantic gradient.",
+                    "merge_gradient_count": len(gradients),
+                    "superseded_by": [
+                        item.target_uri or item.target_name
+                        for item in items
+                        if item.kind == "upsert"
+                    ],
+                },
+            )
+        )
+        delete_uris.add(policy.uri)
     return items
+
+
+def _name_field_for_memory_type(memory_type: str) -> str:
+    """Return the extra_fields key for the policy name in a given memory type."""
+    if memory_type == "experiences":
+        return "experience_name"
+    if memory_type == "skills":
+        return "skill_name"
+    if memory_type.endswith("s"):
+        return f"{memory_type[:-1]}_name"
+    return f"{memory_type}_name"
+
+
+def _fallback_policy_name(op: Any, *, memory_type: str) -> str:
+    uri = _first_uri(getattr(op, "uris", []) or [])
+    if uri:
+        # For skills: path/to/skills/my_skill/SKILL.md → my_skill
+        if memory_type == "skills" and uri.endswith("/SKILL.md"):
+            parts = uri.rstrip("/").split("/")
+            if len(parts) >= 2:
+                return parts[-2]
+        return uri.rstrip("/").split("/")[-1].removesuffix(".md")
+    return f"unknown_{memory_type.rstrip('s')}"
+
+def _source_trajectory_links_from_experience(policy: Policy | None) -> list[StoredLink]:
+    if policy is None:
+        return []
+    links: list[StoredLink] = []
+    for link in list(getattr(policy, "links", []) or []):
+        try:
+            stored_link = link if isinstance(link, StoredLink) else StoredLink(**dict(link))
+        except Exception:
+            continue
+        if _is_source_trajectory_link(stored_link):
+            links.append(stored_link)
+    return links
+
+
+def _superseded_policies_for_gradients(
+    gradients: list[SemanticGradient],
+    policy_set: PolicySet,
+) -> list[Policy]:
+    policies: list[Policy] = []
+    seen: set[str] = set()
+    for gradient in gradients:
+        policy = _find_superseded_policy(_gradient_supersedes(gradient), policy_set)
+        if policy is None or policy.uri in seen:
+            continue
+        seen.add(policy.uri)
+        policies.append(policy)
+    return policies
+
+
+def _merge_source_trajectory_links(links: list[StoredLink]) -> list[StoredLink]:
+    merged: dict[tuple[str, str, str | None], StoredLink] = {}
+    for link in links:
+        if not _is_source_trajectory_link(link):
+            continue
+        key = (link.from_uri, link.to_uri, link.match_text)
+        if key in merged:
+            existing = merged[key]
+            update: dict[str, Any] = {"weight": max(existing.weight, link.weight)}
+            if link.description:
+                update["description"] = link.description
+            if link.created_at and not existing.created_at:
+                update["created_at"] = link.created_at
+            merged[key] = existing.model_copy(update=update)
+        else:
+            merged[key] = link
+    return list(merged.values())
+
+
+def _remap_source_trajectory_links(
+    links: list[StoredLink],
+    *,
+    target_uri: str,
+) -> list[StoredLink]:
+    return [
+        link.model_copy(update={"from_uri": target_uri})
+        for link in links
+        if target_uri and _is_source_trajectory_link(link) and link.to_uri
+    ]
 
 
 def _merge_gradient_links(gradients: list[SemanticGradient]) -> list[StoredLink]:
@@ -477,14 +618,14 @@ def _remap_links_from_uri(links: list[StoredLink], from_uri: str) -> list[Stored
         return list(links)
     return [link.model_copy(update={"from_uri": from_uri}) for link in links]
 
-def _find_policy_by_uri(policy_set: ExperienceSet, uri: str) -> Experience | None:
+def _find_policy_by_uri(policy_set: PolicySet, uri: str) -> Policy | None:
     for policy in policy_set.policies:
         if policy.uri == uri:
             return policy
     return None
 
 def _base_version_from_old_file_or_policy(
-    old_file: Any, target_uri: str | None, policy_set: ExperienceSet
+    old_file: Any, target_uri: str | None, policy_set: PolicySet
 ) -> int | None:
     if old_file is not None:
         version = _safe_int((getattr(old_file, "extra_fields", {}) or {}).get("version"))
@@ -511,14 +652,8 @@ def _gradient_supersedes(gradient: SemanticGradient) -> Any:
         return metadata.get("supersedes")
     return (gradient.after_file.extra_fields or {}).get("supersedes")
 
-def _fallback_experience_name(op: Any) -> str:
-    uri = _first_uri(getattr(op, "uris", []) or [])
-    if uri:
-        return uri.rstrip("/").split("/")[-1].removesuffix(".md")
-    return "unknown_experience"
 
-
-def _find_superseded_policy(supersedes: Any, policy_set: ExperienceSet):
+def _find_superseded_policy(supersedes: Any, policy_set: PolicySet) -> Policy | None:
     names: list[str]
     if isinstance(supersedes, str):
         names = [supersedes]

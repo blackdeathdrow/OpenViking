@@ -116,8 +116,8 @@ async def test_experience_gradient_estimator_converts_experience_operations():
 
     assert len(gradients) == 1
     gradient = gradients[0]
-    assert gradient.target_experience_name == "booking_duplicate_handling"
-    assert gradient.target_experience_uri == (
+    assert gradient.target_name == "booking_duplicate_handling"
+    assert gradient.target_uri == (
         "viking://user/u/memories/experiences/booking_duplicate_handling.md"
     )
     assert gradient.base_version == 7
@@ -126,7 +126,7 @@ async def test_experience_gradient_estimator_converts_experience_operations():
     assert gradient.after_file.extra_fields["supersedes"] == ["older_experience"]
     assert gradient.metadata["supersedes"] == ["older_experience"]
     assert len(gradient.links) == 1
-    assert gradient.links[0].from_uri == gradient.target_experience_uri
+    assert gradient.links[0].from_uri == gradient.target_uri
     assert gradient.links[0].to_uri == analysis.trajectories[0].uri
     assert gradient.links[0].link_type == "derived_from"
     assert gradient.confidence == pytest.approx(0.9)
@@ -155,7 +155,7 @@ async def test_experience_gradient_estimator_uses_policy_version_for_newer_old_f
 
     assert len(gradients) == 1
     gradient = gradients[0]
-    assert gradient.target_experience_name == "booking_duplicate_handling"
+    assert gradient.target_name == "booking_duplicate_handling"
     assert gradient.base_version == 3
     assert gradient.before_file is None
     assert gradient.after_file.content == "replacement body"

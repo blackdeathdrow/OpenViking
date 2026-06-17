@@ -12,19 +12,26 @@ from __future__ import annotations
 
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
-from typing import Any, Literal
+from typing import TYPE_CHECKING, Any, Literal
 
 from openviking.message import Message
 from openviking.session.memory.dataclass import StoredLink
 
+if TYPE_CHECKING:
+    from openviking.session.train.gradients import PatchSemanticGradient
+
 PolicyStatus = Literal["draft", "staging", "production", "deprecated", "archived"]
 TrajectoryOutcome = Literal["success", "failure", "partial", "unfinished", "unknown"]
-PolicyPlanItemKind = Literal["upsert_experience", "delete_experience"]
+PolicyPlanItemKind = Literal["upsert", "delete"]
 
 
 @dataclass(slots=True)
-class Experience:
-    """A single experience file in an ExperienceSet."""
+class Policy:
+    """A single policy file in a PolicySet.
+
+    Generic policy item used for experiences, skills, and other trainable
+    memory types.  Type-specific fields live in ``metadata``.
+    """
 
     name: str
     uri: str
@@ -36,9 +43,13 @@ class Experience:
     backlinks: list[dict[str, Any]] = field(default_factory=list)
 
 
+# Backwards-compatible alias
+Experience = Policy
+
+
 @dataclass(slots=True)
-class ExperienceSet:
-    """Snapshot of all experiences under an experiences directory.
+class PolicySet:
+    """Snapshot of all policies under a policy root directory.
 
     ``viking_fs`` and ``request_context`` are runtime storage dependencies used
     for concurrency-safe policy updates.  They are intentionally excluded from
@@ -47,7 +58,7 @@ class ExperienceSet:
     """
 
     root_uri: str
-    policies: list[Experience]
+    policies: list[Policy]
     metadata: dict[str, Any] = field(default_factory=dict)
     viking_fs: Any | None = field(default=None, repr=False, compare=False)
     request_context: Any | None = field(default=None, repr=False, compare=False)
@@ -62,12 +73,12 @@ class ExperienceSet:
         """
 
         if self.viking_fs is None:
-            raise RuntimeError("ExperienceSet.viking_fs is required for policy locking")
+            raise RuntimeError("PolicySet.viking_fs is required for policy locking")
         if self.request_context is None:
-            raise RuntimeError("ExperienceSet.request_context is required for policy locking")
+            raise RuntimeError("PolicySet.request_context is required for policy locking")
         uri_to_path = getattr(self.viking_fs, "_uri_to_path", None)
         if uri_to_path is None:
-            raise RuntimeError("ExperienceSet.viking_fs must provide _uri_to_path for locking")
+            raise RuntimeError("PolicySet.viking_fs must provide _uri_to_path for locking")
 
         from openviking.storage.transaction import get_lock_manager
 
@@ -83,13 +94,13 @@ class ExperienceSet:
         finally:
             await lock_manager.release(handle)
 
-    async def reload(self) -> "ExperienceSet":
+    async def reload(self) -> "PolicySet":
         """Reload this policy set from its backing VikingFS under the same ctx."""
 
         if self.viking_fs is None:
-            raise RuntimeError("ExperienceSet.viking_fs is required for policy reload")
+            raise RuntimeError("PolicySet.viking_fs is required for policy reload")
         if self.request_context is None:
-            raise RuntimeError("ExperienceSet.request_context is required for policy reload")
+            raise RuntimeError("PolicySet.request_context is required for policy reload")
 
         from openviking.session.train.components.memory_store import ExperienceSetLoader
 
@@ -97,6 +108,10 @@ class ExperienceSet:
             self.root_uri,
             ctx=self.request_context,
         )
+
+
+# Backwards-compatible alias
+ExperienceSet = PolicySet
 
 
 @dataclass(slots=True)
@@ -182,11 +197,15 @@ class RolloutAnalysis:
     """Structured analysis of a rollout.
 
     Contains both rubric evaluation and trajectories extracted from the same
-    rollout context.
+    rollout context.  ``gradients`` carries any policy patches co-extracted
+    during analysis (e.g. session skill patches) keyed by their
+    ``memory_type``; these bypass the gradient estimator and are fed directly
+    into the corresponding policy trainer.
     """
 
     evaluation: RubricEvaluation
     trajectories: list[Trajectory]
+    gradients: list["PatchSemanticGradient"] = field(default_factory=list)
     metadata: dict[str, Any] = field(default_factory=dict)
 
 
@@ -194,14 +213,15 @@ class RolloutAnalysis:
 class PolicyPlanItem:
     """One executable item in a PolicyUpdatePlan.
 
-    The first stable implementation focuses on upserting full experience file
-    content produced by PatchSemanticGradient.  Other plan kinds are reserved
-    for future delete / split / merge / human-review actions.
+    Supports multiple policy memory types (experiences, skills, ...) via the
+    ``memory_type`` field.  Each item represents an upsert or delete operation
+    against a single target policy file.
     """
 
     kind: PolicyPlanItemKind
-    target_experience_name: str
-    target_experience_uri: str | None
+    memory_type: str
+    target_name: str
+    target_uri: str | None
     before_content: str | None
     after_content: str | None
     base_version: int | None = None
@@ -212,7 +232,7 @@ class PolicyPlanItem:
 
 @dataclass(slots=True)
 class PolicyUpdatePlan:
-    """Planned update for an ExperienceSet.
+    """Planned update for a PolicySet.
 
     ``items`` is the executable part consumed by PolicyUpdater implementations.
     ``metadata`` keeps optimizer diagnostics such as grouping, conflicts, and
@@ -227,7 +247,7 @@ class PolicyUpdatePlan:
 class PolicyApplyResult:
     """Result of applying a PolicyUpdatePlan."""
 
-    updated_policy_set: ExperienceSet
+    updated_policy_set: PolicySet
     written_uris: list[str] = field(default_factory=list)
     deleted_uris: list[str] = field(default_factory=list)
     errors: list[str] = field(default_factory=list)

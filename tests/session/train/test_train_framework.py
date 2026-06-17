@@ -18,11 +18,11 @@ from openviking.session.train import (
     Experience,
     ExperienceSet,
     ListCaseLoader,
-    OfflinePolicyOptimizationPipeline,
     NoopPipelineLifecycleHook,
-    PipelineReportHook,
+    OfflinePolicyOptimizationPipeline,
     PipelineContext,
     PipelineHookDecision,
+    PipelineReportHook,
     PolicyApplyResult,
     PolicyUpdatePlan,
     Rollout,
@@ -113,8 +113,8 @@ def _policy_set(*, version: int = 1, viking_fs: DummyVikingFS | None = None) -> 
 
 @dataclass
 class DummyGradient:
-    target_experience_name: str
-    target_experience_uri: str | None
+    target_name: str
+    target_uri: str | None
     base_version: int | None
     rationale: str
     links: list[StoredLink]
@@ -198,8 +198,8 @@ class DummyEstimator:
         traj = analysis.trajectories[0]
         return [
             DummyGradient(
-                target_experience_name="booking_duplicate_handling",
-                target_experience_uri=experience_set.policies[0].uri,
+                target_name="booking_duplicate_handling",
+                target_uri=experience_set.policies[0].uri,
                 base_version=experience_set.policies[0].version,
                 rationale="trajectory succeeded",
                 links=[
@@ -652,8 +652,8 @@ async def test_streaming_policy_trainer_splits_flush_by_gradient_count():
             traj = analysis.trajectories[0]
             return [
                 DummyGradient(
-                    target_experience_name="booking_duplicate_handling",
-                    target_experience_uri=experience_set.policies[0].uri,
+                    target_name="booking_duplicate_handling",
+                    target_uri=experience_set.policies[0].uri,
                     base_version=experience_set.policies[0].version,
                     rationale=f"gradient {idx}",
                     links=[
@@ -722,8 +722,8 @@ async def test_streaming_policy_trainer_chunks_multiple_target_gradients_by_coun
             traj = analysis.trajectories[0]
             return [
                 DummyGradient(
-                    target_experience_name=f"target_{idx}",
-                    target_experience_uri=f"{experience_set.root_uri}/target_{idx}.md",
+                    target_name=f"target_{idx}",
+                    target_uri=f"{experience_set.root_uri}/target_{idx}.md",
                     base_version=None,
                     rationale=f"gradient {idx}",
                     links=[
@@ -787,8 +787,8 @@ async def test_streaming_policy_trainer_mixes_categories_in_chunks():
             del analysis, context
             return [
                 DummyGradient(
-                    target_experience_name=f"target_{idx}",
-                    target_experience_uri=f"{experience_set.root_uri}/target_{idx}.md",
+                    target_name=f"target_{idx}",
+                    target_uri=f"{experience_set.root_uri}/target_{idx}.md",
                     base_version=None,
                     rationale=f"gradient {idx}",
                     links=[],

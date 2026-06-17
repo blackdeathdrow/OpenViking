@@ -431,8 +431,8 @@ def _print_real_llm_e2e_summary(
         trajectory_content,
         "",
         "[Semantic Gradient]",
-        f"target_experience_name: {gradient.target_experience_name}",
-        f"target_experience_uri: {gradient.target_experience_uri}",
+        f"target_name: {gradient.target_name}",
+        f"target_uri: {gradient.target_uri}",
         f"base_version: {gradient.base_version}",
         f"confidence: {gradient.confidence}",
         "",
@@ -483,8 +483,8 @@ def _print_iterative_real_llm_summary(
                 lines.extend(
                     [
                         f"[Epoch {epoch.epoch} Gradient {gradient_idx}]",
-                        f"target_experience_name: {gradient.target_experience_name}",
-                        f"target_experience_uri: {gradient.target_experience_uri}",
+                        f"target_name: {gradient.target_name}",
+                        f"target_uri: {gradient.target_uri}",
                         f"confidence: {gradient.confidence}",
                     ]
                 )
@@ -769,7 +769,7 @@ async def test_experience_gradient_estimator_real_config_llm_generates_gradient(
         trajectory_content=analysis.trajectories[0].content,
         gradient=gradient,
     )
-    assert gradient.target_experience_name
+    assert gradient.target_name
     assert gradient.after_file.plain_content().strip()
     assert gradient.links
     assert gradient.links[0].to_uri in fs.files

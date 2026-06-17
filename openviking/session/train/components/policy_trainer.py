@@ -243,6 +243,52 @@ class StreamingPolicyTrainer:
         )
         return result
 
+    @tracer("train.streaming_policy_trainer.submit_gradients", ignore_result=True, ignore_args=True)
+    async def submit_gradients(
+        self,
+        gradients: list[SemanticGradient],
+        *,
+        analysis: RolloutAnalysis | None = None,
+        rollout: Rollout | None = None,
+    ) -> RolloutTrainingResult:
+        """Submit pre-computed gradients directly to the streaming trainer.
+
+        Unlike ``submit_rollout``, this method skips analysis and gradient
+        estimation.  It is useful for memory types whose gradients are
+        produced during an earlier stage (e.g. session skills co-extracted
+        during trajectory analysis).
+        """
+        if self._closed:
+            raise RuntimeError("StreamingPolicyTrainer is closed")
+        if not gradients:
+            # No gradients to submit — return a no-op result immediately.
+            return RolloutTrainingResult(
+                analyses=[analysis] if analysis is not None else [],
+                gradients=[],
+                plan=PolicyUpdatePlan(items=[], metadata={"no_op": True}),
+                apply_result=PolicyApplyResult(
+                    updated_policy_set=self.policy_set,
+                    written_uris=[],
+                    errors=[],
+                    metadata={"no_op": True},
+                ),
+                metadata={"no_op": True, "gradient_count": 0},
+            )
+        tracer.info(
+            "StreamingPolicyTrainer buffered gradients "
+            f"new_gradients={len(gradients)}",
+            console=self.config.trace_console,
+        )
+        result = await self._batcher.submit(
+            _BufferedRolloutTraining(
+                gradients=list(gradients),
+                analysis=analysis,
+                rollout=rollout,
+            )
+        )
+        self._last_apply_result = result.apply_result
+        return result
+
 
     @tracer("train.streaming_policy_trainer.train_rollouts", ignore_result=True, ignore_args=True)
     async def train_rollouts(
@@ -266,8 +312,12 @@ class StreamingPolicyTrainer:
             self.config.max_gradients_per_update,
         )
         gradients = [gradient for chunk in chunks for gradient in chunk.gradients]
-        analyses = _unique_by_identity([item.analysis for item in items])
-        rollouts = _unique_by_identity([item.rollout for item in items])
+        analyses = _unique_by_identity(
+            [item.analysis for item in items if item.analysis is not None]
+        )
+        rollouts = _unique_by_identity(
+            [item.rollout for item in items if item.rollout is not None]
+        )
         tracer.info(
             "StreamingPolicyTrainer flush started "
             f"reason={reason} "
@@ -395,8 +445,8 @@ def _combine_apply_results(
 @dataclass(slots=True)
 class _BufferedRolloutTraining:
     gradients: list[SemanticGradient]
-    analysis: RolloutAnalysis
-    rollout: Rollout
+    analysis: RolloutAnalysis | None = None
+    rollout: Rollout | None = None
 
 
 @dataclass(slots=True)
@@ -473,10 +523,15 @@ def _validate_rollouts_have_cases(rollouts: list[Rollout]) -> None:
         )
 
 
-def _average_score(analyses: list[RolloutAnalysis]) -> float | None:
-    if not analyses:
+def _average_score(analyses: list[RolloutAnalysis | None]) -> float | None:
+    scores = [
+        float(analysis.evaluation.score)
+        for analysis in analyses
+        if analysis is not None and analysis.evaluation is not None
+    ]
+    if not scores:
         return None
-    return sum(float(analysis.evaluation.score) for analysis in analyses) / len(analyses)
+    return sum(scores) / len(scores)
 
 
 def _unique_by_identity(items: list[Any]) -> list[Any]:
