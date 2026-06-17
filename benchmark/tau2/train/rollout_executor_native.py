@@ -763,9 +763,29 @@ def _build_rollout_messages_from_simulation(
     evaluation_result: Any,
 ) -> list[Message]:
     messages: list[Message] = []
+    pending_tool_calls: dict[str, tuple[str, dict[str, Any]]] = {}
     for index, message in enumerate(getattr(simulation, "messages", []) or []):
-        converted = _simulation_message_to_rollout_messages(message, index)
+        converted = _simulation_message_to_rollout_messages(
+            message,
+            index,
+            pending_tool_calls=pending_tool_calls,
+        )
         messages.extend(converted)
+    for call_id, (tool_name, tool_input) in pending_tool_calls.items():
+        messages.append(
+            Message(
+                id=f"tau2-tool-pending-{index if 'index' in locals() else 0}-{len(messages)}",
+                role="assistant",
+                parts=[
+                    ToolPart(
+                        tool_id=call_id,
+                        tool_name=tool_name,
+                        tool_input=tool_input,
+                        tool_status="running",
+                    )
+                ],
+            )
+        )
     reward_jsonable = _to_jsonable(reward)
     evaluation_jsonable = _to_jsonable(evaluation_result)
     success = reward_jsonable == 1 or reward_jsonable == 1.0
@@ -780,7 +800,12 @@ def _build_rollout_messages_from_simulation(
     return messages
 
 
-def _simulation_message_to_rollout_messages(message: Any, index: int) -> list[Message]:
+def _simulation_message_to_rollout_messages(
+    message: Any,
+    index: int,
+    *,
+    pending_tool_calls: dict[str, tuple[str, dict[str, Any]]] | None = None,
+) -> list[Message]:
     role = _role_value(getattr(message, "role", "assistant"))
     if role == "system":
         content = str(getattr(message, "content", "") or "")
@@ -798,17 +823,35 @@ def _simulation_message_to_rollout_messages(message: Any, index: int) -> list[Me
         if tool_calls:
             rows = []
             for call_idx, call in enumerate(tool_calls):
+                call_id = str(getattr(call, "id", "") or f"tau2-tool-{index}-{call_idx}")
+                tool_name = _tool_call_name(call)
+                tool_input = _as_tool_input(_tool_call_arguments(call))
+                if _is_communicate_with_user(tool_name):
+                    assistant_text = _communicate_text_from_tool_input(tool_input)
+                    if assistant_text.strip():
+                        rows.append(
+                            Message(
+                                id=f"tau2-communicate-assistant-{index}-{call_idx}",
+                                role="assistant",
+                                parts=[TextPart(text=assistant_text)],
+                                created_at=getattr(message, "timestamp", None),
+                            )
+                        )
+                    if pending_tool_calls is not None:
+                        pending_tool_calls[call_id] = (tool_name, tool_input)
+                    continue
+                if pending_tool_calls is not None:
+                    pending_tool_calls[call_id] = (tool_name, tool_input)
+                    continue
                 rows.append(
                     Message(
                         id=f"tau2-tool-call-{index}-{call_idx}",
                         role="assistant" if role == "assistant" else "user",
                         parts=[
                             ToolPart(
-                                tool_id=str(
-                                    getattr(call, "id", "") or f"tau2-tool-{index}-{call_idx}"
-                                ),
-                                tool_name=_tool_call_name(call),
-                                tool_input=_as_tool_input(_tool_call_arguments(call)),
+                                tool_id=call_id,
+                                tool_name=tool_name,
+                                tool_input=tool_input,
                                 tool_status="running",
                             )
                         ],
@@ -825,15 +868,31 @@ def _simulation_message_to_rollout_messages(message: Any, index: int) -> list[Me
             )
         ]
     if role == "tool":
+        call_id = str(getattr(message, "id", "") or f"tau2-tool-{index}")
+        pending = pending_tool_calls.pop(call_id, None) if pending_tool_calls is not None else None
+        tool_name, tool_input = pending if pending is not None else ("unknown", None)
+        output = str(getattr(message, "content", "") or "")
+        if _is_communicate_with_user(tool_name):
+            if not output.strip():
+                return []
+            return [
+                Message(
+                    id=f"tau2-communicate-user-{index}",
+                    role="user",
+                    parts=[TextPart(text=output)],
+                    created_at=getattr(message, "timestamp", None),
+                )
+            ]
         return [
             Message(
                 id=f"tau2-tool-result-{index}",
                 role="user",
                 parts=[
                     ToolPart(
-                        tool_id=str(getattr(message, "id", "") or f"tau2-tool-{index}"),
-                        tool_name="unknown",
-                        tool_output=str(getattr(message, "content", "") or ""),
+                        tool_id=call_id,
+                        tool_name=tool_name,
+                        tool_input=tool_input,
+                        tool_output=output,
                         tool_status="error"
                         if bool(getattr(message, "error", False))
                         else "completed",
@@ -844,6 +903,20 @@ def _simulation_message_to_rollout_messages(message: Any, index: int) -> list[Me
         ]
     content = str(getattr(message, "content", "") or "")
     return [_message(f"tau2-message-{index}", "assistant", content)]
+
+
+
+def _is_communicate_with_user(tool_name: str) -> bool:
+    return tool_name == "communicate_with_user"
+
+
+def _communicate_text_from_tool_input(tool_input: dict[str, Any] | None) -> str:
+    if not isinstance(tool_input, dict):
+        return ""
+    content = tool_input.get("content")
+    if content is None:
+        return ""
+    return str(content)
 
 
 def _control_message(

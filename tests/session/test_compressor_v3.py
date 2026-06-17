@@ -292,7 +292,7 @@ def _case_spec_message(case: Case | None = None) -> Message:
     request = _case_spec_message_to_request(rollout)
     return Message(
         id="case-spec",
-        role="user",
+        role="system",
         parts=[
             ControlPart(
                 control_type=request["parts"][0]["control_type"],

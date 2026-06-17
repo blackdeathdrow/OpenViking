@@ -569,39 +569,49 @@ def _build_rollout_messages(
         for idx, tool_info in enumerate(tools_used):
             if not isinstance(tool_info, dict):
                 continue
-            tool_name = tool_info.get("tool_name", "")
+            tool_name = str(tool_info.get("tool_name") or "unknown")
+            if not tool_name or tool_name == "unknown" and not tool_info.get("result"):
+                continue
             args = tool_info.get("args", "")
-            if tool_name:
-                messages.append(
-                    Message(
-                        id=f"tau2-tool-call-{idx}",
-                        role="assistant",
-                        parts=[
-                            ToolPart(
-                                tool_id=f"tau2-tool-{idx}",
-                                tool_name=str(tool_name),
-                                tool_input=_as_tool_input(args),
-                                tool_status="running",
-                            )
-                        ],
+            tool_input = _as_tool_input(args)
+            result = tool_info.get("result")
+            has_result = result is not None
+            if _is_communicate_with_user(tool_name):
+                assistant_text = _communicate_text_from_tool_input(tool_input)
+                if assistant_text.strip():
+                    messages.append(
+                        _message(
+                            f"tau2-communicate-assistant-{idx}",
+                            "assistant",
+                            assistant_text,
+                        )
                     )
-                )
-            if tool_info.get("result") is not None:
-                messages.append(
-                    Message(
-                        id=f"tau2-tool-result-{idx}",
-                        role="user",
-                        parts=[
-                            ToolPart(
-                                tool_id=f"tau2-tool-{idx}",
-                                tool_name=str(tool_name or "unknown"),
-                                tool_input=_as_tool_input(args),
-                                tool_output=_stringify(tool_info.get("result")),
-                                tool_status="completed",
+                if has_result:
+                    user_text = _stringify(result)
+                    if user_text.strip():
+                        messages.append(
+                            _message(
+                                f"tau2-communicate-user-{idx}",
+                                "user",
+                                user_text,
                             )
-                        ],
-                    )
+                        )
+                continue
+            messages.append(
+                Message(
+                    id=f"tau2-tool-{idx}",
+                    role="user" if has_result else "assistant",
+                    parts=[
+                        ToolPart(
+                            tool_id=f"tau2-tool-{idx}",
+                            tool_name=tool_name,
+                            tool_input=tool_input,
+                            tool_output=_stringify(result) if has_result else "",
+                            tool_status="completed" if has_result else "running",
+                        )
+                    ],
                 )
+            )
     if final_content and str(final_content).strip():
         messages.append(_message("tau2-final", "assistant", str(final_content)))
     reward_jsonable = _to_jsonable(reward)
@@ -634,6 +644,20 @@ def _control_message(
         role="user",
         parts=[ControlPart(control_type=control_type, payload=payload, text=text)],
     )
+
+
+
+def _is_communicate_with_user(tool_name: str) -> bool:
+    return tool_name == "communicate_with_user"
+
+
+def _communicate_text_from_tool_input(tool_input: dict[str, Any] | None) -> str:
+    if not isinstance(tool_input, dict):
+        return ""
+    content = tool_input.get("content")
+    if content is None:
+        return ""
+    return str(content)
 
 
 def _last_tool_name(tools_used: Any) -> str:

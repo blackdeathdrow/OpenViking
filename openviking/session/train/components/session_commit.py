@@ -434,7 +434,7 @@ def _case_spec_message_to_request(rollout: Rollout) -> dict[str, Any]:
         f"```json\n{_case_spec_payload_json(rollout)}\n```"
     )
     return {
-        "role": "user",
+        "role": "system",
         "parts": [
             {
                 "type": "control",

@@ -149,7 +149,7 @@ def test_dataset_service_policy_set_from_dict_preserves_policies():
     assert policy.metadata == {"domain": "booking"}
 
 
-def test_tau2_rollout_messages_use_structured_tool_parts():
+def test_tau2_rollout_messages_use_completed_structured_tool_parts():
     from benchmark.tau2.train.rollout_executor import _build_rollout_messages
     from openviking.message import ControlPart, TextPart, ToolPart
 
@@ -171,22 +171,54 @@ def test_tau2_rollout_messages_use_structured_tool_parts():
     assert isinstance(rollout_messages[0].parts[0], ControlPart)
     assert rollout_messages[0].parts[0].control_type == "tau2_system_prompt"
 
-    tool_call_message = rollout_messages[2]
-    assert tool_call_message.role == "assistant"
-    assert isinstance(tool_call_message.parts[0], ToolPart)
-    assert tool_call_message.parts[0].tool_status == "running"
-    assert tool_call_message.parts[0].tool_input == {"user_id": "emma_kim_9957"}
+    tool_message = rollout_messages[2]
+    assert tool_message.role == "user"
+    assert isinstance(tool_message.parts[0], ToolPart)
+    assert tool_message.parts[0].tool_status == "completed"
+    assert tool_message.parts[0].tool_input == {"user_id": "emma_kim_9957"}
+    assert tool_message.parts[0].tool_output == '{"membership": "gold"}'
     assert not any(
         isinstance(part, TextPart) and "tool-call:" in part.text
         for message in rollout_messages
         for part in message.parts
     )
+    assert not any(
+        isinstance(part, ToolPart) and part.tool_status == "running"
+        for message in rollout_messages
+        for part in message.parts
+    )
 
-    tool_result_message = rollout_messages[3]
-    assert tool_result_message.role == "user"
-    assert isinstance(tool_result_message.parts[0], ToolPart)
-    assert tool_result_message.parts[0].tool_status == "completed"
-    assert tool_result_message.parts[0].tool_output == '{"membership": "gold"}'
+
+def test_tau2_communicate_with_user_renders_as_dialogue():
+    from benchmark.tau2.train.rollout_executor import _build_rollout_messages
+    from openviking.message import TextPart, ToolPart
+
+    rollout_messages = _build_rollout_messages(
+        system_prompt="policy",
+        user_prompt="user request",
+        tools_used=[
+            {
+                "tool_name": "communicate_with_user",
+                "args": {"content": "Could you provide your user ID?"},
+                "result": "Sure, it is emma_kim_9957.",
+            }
+        ],
+        final_content=None,
+        evaluation_result=None,
+        reward=1.0,
+    )
+
+    assert rollout_messages[2].role == "assistant"
+    assert isinstance(rollout_messages[2].parts[0], TextPart)
+    assert rollout_messages[2].parts[0].text == "Could you provide your user ID?"
+    assert rollout_messages[3].role == "user"
+    assert isinstance(rollout_messages[3].parts[0], TextPart)
+    assert rollout_messages[3].parts[0].text == "Sure, it is emma_kim_9957."
+    assert not any(
+        isinstance(part, ToolPart) and part.tool_name == "communicate_with_user"
+        for message in rollout_messages
+        for part in message.parts
+    )
 
 
 def test_tau2_rollout_messages_omit_empty_final_after_done():
