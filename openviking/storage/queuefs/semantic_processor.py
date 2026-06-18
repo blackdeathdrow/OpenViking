@@ -171,7 +171,7 @@ class SemanticProcessor(DequeueHandlerBase):
 
     @staticmethod
     def _ctx_from_semantic_msg(msg: SemanticMsg) -> RequestContext:
-        role = Role(msg.role) if msg.role in {r.value for r in Role} else Role.ROOT
+        role = Role(msg.role) if msg.role in {Role.ROOT, Role.ADMIN, Role.USER} else Role.ROOT
         return RequestContext(
             user=UserIdentifier(msg.account_id, msg.user_id),
             role=role,
