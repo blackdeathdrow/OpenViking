@@ -13,9 +13,9 @@ from openviking_cli.session.user_id import UserIdentifier
 
 def test_role_values():
     """Role enum should have correct string values."""
-    assert Role.ROOT.value == "root"
-    assert Role.ADMIN.value == "admin"
-    assert Role.USER.value == "user"
+    assert Role.ROOT == "root"
+    assert Role.ADMIN == "admin"
+    assert Role.USER == "user"
 
 
 def test_role_from_string():
