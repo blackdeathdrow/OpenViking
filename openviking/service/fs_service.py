@@ -318,7 +318,11 @@ class FSService:
         context_type: str,
         ctx: RequestContext,
     ) -> None:
-        queue_manager = get_queue_manager()
+        try:
+            queue_manager = get_queue_manager()
+        except RuntimeError as exc:
+            logger.warning("QueueManager not available, skipping delete refresh: %s", exc)
+            return
         semantic_queue = queue_manager.get_queue(queue_manager.SEMANTIC, allow_create=True)
         telemetry_id = get_current_telemetry().telemetry_id
         msg = SemanticMsg(
@@ -506,4 +510,24 @@ class FSService:
             mode=mode,
             wait=wait,
             timeout=timeout,
+        )
+
+    async def set_tags(
+        self,
+        uri: str,
+        tags: list[str],
+        mode: str,
+        recursive: bool,
+        ctx: RequestContext,
+    ) -> Dict[str, Any]:
+        """Set explicit retrieval tags for a file or directory semantic nodes."""
+        uri = validate_viking_uri(uri)
+        viking_fs = self._ensure_initialized()
+        coordinator = ContentWriteCoordinator(viking_fs=viking_fs)
+        return await coordinator.set_tags(
+            uri=uri,
+            tags=tags,
+            mode=mode,
+            recursive=recursive,
+            ctx=ctx,
         )
