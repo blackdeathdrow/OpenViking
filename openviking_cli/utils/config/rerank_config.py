@@ -36,9 +36,14 @@ class RerankConfig(BaseModel):
         description="Extra HTTP headers for OpenAI-compatible providers"
     )
 
-    timeout: int = Field(
+    connect_timeout: int = Field(
+        default=10,
+        description="HTTP connection timeout in seconds for rerank API calls",
+    )
+
+    read_timeout: int = Field(
         default=30,
-        description="HTTP request timeout in seconds for rerank API calls"
+        description="HTTP read timeout in seconds for rerank API calls",
     )
 
     threshold: float = Field(
