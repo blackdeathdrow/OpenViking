@@ -31,6 +31,8 @@ class OpenAIRerankClient(RerankBase):
         api_base: str,
         model_name: str,
         extra_headers: Optional[Dict[str, str]] = None,
+        connect_timeout: int = 10,
+        read_timeout: int = 30,
     ) -> None:
         """
         Initialize OpenAI-compatible rerank client.
@@ -40,12 +42,16 @@ class OpenAIRerankClient(RerankBase):
             api_base: Full endpoint URL for the rerank API
             model_name: Model name to use for reranking
             extra_headers: Optional extra headers for API requests
+            connect_timeout: HTTP connection timeout in seconds
+            read_timeout: HTTP read timeout in seconds
         """
         super().__init__()
         self.api_key = api_key
         self.api_base = api_base
         self.model_name = model_name
         self.extra_headers = extra_headers or {}
+        self.connect_timeout = connect_timeout
+        self.read_timeout = read_timeout
         self.provider = "openai"
 
     def rerank_batch(self, query: str, documents: List[str]) -> Optional[List[float]]:
@@ -81,7 +87,7 @@ class OpenAIRerankClient(RerankBase):
                 url=self.api_base,
                 headers=headers,
                 json=req_body,
-                timeout=30,
+                timeout=(self.connect_timeout, self.read_timeout),
             )
             response.raise_for_status()
             result = response.json()
@@ -139,4 +145,6 @@ class OpenAIRerankClient(RerankBase):
             api_base=config.api_base,
             model_name=config.model or "qwen3-rerank",
             extra_headers=config.extra_headers,
+            connect_timeout=config.connect_timeout,
+            read_timeout=config.read_timeout,
         )
